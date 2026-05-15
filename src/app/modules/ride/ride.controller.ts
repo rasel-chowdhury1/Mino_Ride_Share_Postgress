@@ -9,7 +9,6 @@ const createRide = catchAsync(async (req: Request, res: Response) => {
   const {userId, country} = req.user;
   
   req.body.passenger = userId;
-  req.body.country = country;
 
   console.log("ride body =>>> ", req.body)
   const result = await RideService.createRide(req.body);

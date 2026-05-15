@@ -100,7 +100,9 @@ const createCheckoutSession = async (
   const subtotal     = ride.totalFare ?? 0;
   const newTotalFare = subtotal + tipAmount;
 
-  const fare            = await prisma.fare.findFirst({ where: { country: ride.country, isActive: true } });
+  let country = ride.country || "BANGLADESH";
+
+  const fare            = await prisma.fare.findFirst({ where: { country, isActive: true } });
   const commissionPct   = fare?.platformCommissionPercentage ?? 0;
   const adminCommission = Math.round((subtotal * commissionPct) / 100);
   const driverEarning   = Math.round(newTotalFare - adminCommission);

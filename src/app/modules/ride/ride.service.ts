@@ -461,7 +461,9 @@ const estimateRideOptions = async ({ distanceKm, country }: EstimateRideOptionsS
 
   distanceKm = Number(distanceKm);
 
-  const fare = await prisma.fare.findFirst({ where: { country: country.toUpperCase(), isActive: true } });
+  
+
+  const fare = await prisma.fare.findFirst({ where: { country: country.toUpperCase() || "BANGLADESH", isActive: true } });
   if (!fare) throw new Error('Fare configuration not found for this country');
 
   const vehicleConfigs = [
@@ -651,8 +653,9 @@ const arrivedDropoff = async (
   const speed         = AVERAGE_SPEED_KMH[ride.vehicleCategory] ?? 40;
   const actualDurationMin = Math.ceil((actualDistanceKm / speed) * 60);
 
+  
   const fares = await recalculateFare({
-    country:          ride.country,
+    country:          ride.country || "BANGLADESH",
     vehicleCategory:  ride.vehicleCategory,
     actualDistanceKm,
     promoDiscount:    ride.promoDiscount,
@@ -864,7 +867,7 @@ const collectCashPayment = async (rideId: string, driverId: string, tip = 0) => 
   const subtotal        = ride.totalFare ?? 0;
   const newTotalFare    = subtotal + tipAmount;
 
-  const fare            = await prisma.fare.findFirst({ where: { country: ride.country, isActive: true } });
+  const fare            = await prisma.fare.findFirst({ where: { country: ride.country || "BANGLADESh", isActive: true } });
   const commissionPct   = fare?.platformCommissionPercentage ?? 0;
   const adminCommission = Math.round((subtotal * commissionPct) / 100);
   const driverEarning   = Math.round(newTotalFare - adminCommission);

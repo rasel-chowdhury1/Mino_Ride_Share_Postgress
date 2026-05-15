@@ -120,7 +120,7 @@ export const estimateRideOptions = async ({
   distanceKm = Number(distanceKm);
 
   const fare = await prisma.fare.findFirst({
-    where: { country: country.toUpperCase(), isActive: true },
+    where: { country: country.toUpperCase() || "BANGLADESH", isActive: true },
   });
 
   if (!fare) throw new Error('Fare configuration not found for this country');
@@ -186,7 +186,7 @@ export const estimateMotoOptions = async ({
   distanceKm = Number(distanceKm);
 
   const fare = await prisma.fare.findFirst({
-    where: { country: country.toUpperCase(), isActive: true },
+    where: { country: country.toUpperCase() || "BANGLADESH", isActive: true },
   });
 
   if (!fare) throw new Error('Fare configuration not found for this country');
@@ -233,8 +233,10 @@ export const recalculateFare = async (params: {
   adminCommission: number;
   driverEarning:   number;
 }> => {
+
+
   const fare = await prisma.fare.findFirst({
-    where: { country: params.country.toUpperCase(), isActive: true },
+    where: { country: params.country.toUpperCase() || "BANGLADESH", isActive: true },
   });
   if (!fare) throw new Error('Fare configuration not found for this country');
 
