@@ -242,6 +242,8 @@ const updateMyProfile = async (userId: string, payload: TUserUpdate) => {
     if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
   }
 
+  console.log("Payload =>>>>> ", )
+
   const { userFields, driverFields } = normalizeUserPayload(payload);
  console.log("driver profile update data =>>>> ", {
           userId,

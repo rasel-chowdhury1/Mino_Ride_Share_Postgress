@@ -10,6 +10,8 @@ const createRide = catchAsync(async (req: Request, res: Response) => {
   
   req.body.passenger = userId;
   req.body.country = country;
+
+  console.log("ride body =>>> ", req.body)
   const result = await RideService.createRide(req.body);
 
   sendResponse(res, {
@@ -22,6 +24,7 @@ const createRide = catchAsync(async (req: Request, res: Response) => {
 
 
 const driverAcceptRide = catchAsync(async (req: Request, res: Response) => {
+
 
   const { driverProfileId } = req.user;
   const { rideId } = req.params;

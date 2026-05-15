@@ -134,6 +134,7 @@ export interface JoinRideRoomPayload {
 // ─── Outbound payloads (Server → Client) ─────────────────────────────────────
 
 export interface RideRequestedPayload {
+  id?: string;
   rideId: string;
   passengerId: string;
   passengerName: string;

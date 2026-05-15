@@ -212,6 +212,8 @@ const driverAcceptRide = async (
   lat?:    number,
   lng?:    number,
 ) => {
+
+  console.log("driver accept ride =>>>> ", {rideId, driverId, lat, lng})
   // Only accept rides that haven't been taken yet
   const existing = await prisma.ride.findFirst({ where: { id: rideId, driverId: null } });
   if (!existing) throw new Error('Ride not found or already accepted');
@@ -1252,7 +1254,13 @@ const submitRideReview = async (
 const getMyActiveRide = async (id: string, role: 'passenger' | 'driver') => {
   const where: Prisma.RideWhereInput = {
     ...(role === 'driver' ? { driverId: id } : { passengerId: id }),
-    status:    RideStatus.ONGOING,
+    status: {
+      in: [
+        RideStatus.ACCEPTED,
+        RideStatus.ARRIVED_PICKUP,
+        RideStatus.ONGOING,
+      ],
+    },
     isDeleted: false,
   };
 

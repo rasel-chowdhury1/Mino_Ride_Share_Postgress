@@ -373,6 +373,7 @@ export function registerSocketEvents(socket: Socket, _io: SocketIOServer): void 
   socket.on(
     SocketEvents.START_RIDE,
     async (payload: StartRidePayload, ackFn?: AckFn) => {
+
       try {
         if (role !== 'driver') {
           return sendAck(ackFn, { success: false, error: 'Only drivers can start rides', code: 403 });
@@ -676,10 +677,10 @@ export function registerSocketEvents(socket: Socket, _io: SocketIOServer): void 
     unregisterUser(userId, driverProfileId);
 
     if (role === 'driver' && driverProfileId) {
-      await prisma.driverProfile.update({
-        where: { id: driverProfileId },
-        data:  { isOnline: false },
-      }).catch((err) => logger.error('Auto-offline on disconnect failed:', err));
+      // await prisma.driverProfile.update({
+      //   where: { id: driverProfileId },
+      //   data:  { isOnline: false },
+      // }).catch((err) => logger.error('Auto-offline on disconnect failed:', err));
       logger.info(`[AUTO OFFLINE] driver=${userId}`);
     }
 
