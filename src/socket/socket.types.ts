@@ -82,6 +82,8 @@ export const SocketEvents = {
   ONLINE_USERS: 'onlineUser',
   USER_CONNECTED: 'userConnected', // legacy manual registration
   ERROR: 'error',
+  NO_DRIVERS_AVAILABLE: 'no_drivers_available',
+  RIDE_TAKEN: 'ride_taken',
 
 } as const;
 

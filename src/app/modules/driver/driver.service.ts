@@ -46,6 +46,7 @@ const getEarnings = async (
       driverId:  driverProfileId,
       status:    'COMPLETED',
       createdAt: { gte: from, lte: to },
+      isDeleted: false
     },
     select: {
       pickupAddress:  true,
@@ -100,7 +101,7 @@ const getDriverStats = async (driverProfileId: string) => {
     : `${activeMinutes}m`;
 
   const recentTrips = await prisma.ride.findMany({
-    where:   { driverId: driverProfileId, status: 'COMPLETED' },
+    where:   { driverId: driverProfileId, status: 'COMPLETED', isDeleted: false },
     orderBy: { createdAt: 'desc' },
     take:    10,
     select:  {

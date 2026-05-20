@@ -1,4 +1,4 @@
-import { RideStatus, CancellationActor, Prisma } from '@prisma/client';
+import { RideStatus, CancellationActor, Prisma, PickupType } from '@prisma/client';
 import prisma from '../../config/prisma';
 import {
   isManagerReady,
@@ -8,6 +8,7 @@ import {
   emitToDriver,
   emitToRideRoom,
   setDriverOnRide,
+  notifyRideTaken,
 } from '../../../socket/socket.manager';
 import { getDistanceKm, recalculateFare } from './ride.utils';
 import { SocketEvents } from '../../../socket/socket.types';
@@ -19,6 +20,7 @@ import AppError from '../../error/AppError';
 import httpStatus from 'http-status';
 import { PaymentService } from '../payment/payment.service';
 import { recordWalletTransaction } from '../wallet/wallet.service';
+import { rideCompletedEmailTemplate } from '../../utils/emailNotification';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -58,6 +60,7 @@ const driverInclude = {
 
 const createRide = async (payload: any) => {
 
+
   const passengerId = payload.passenger;
   const pickupAddress = payload.pickupLocation?.address;
   const pickupCoords = payload.pickupLocation?.location?.coordinates || [];
@@ -81,17 +84,15 @@ const createRide = async (payload: any) => {
   }
 
 
-  console.log("create ride payload =>>>> ", payload);
   const rideId = await generateRideId();
-
- console.log("rideId from create ride =>>>> ", rideId);
+  const country = payload.country || "BANGLADESH";
 
 let ride;
  try {
     ride = await prisma.ride.create({
     data: {
       rideId,
-      country:         payload.country.toUpperCase(),
+      country:         country.toUpperCase() || "BANGLADESH",
       passengerId,
       serviceType:     payload.serviceType,
       vehicleCategory: payload.vehicleCategory,
@@ -146,6 +147,7 @@ let ride;
 
 
   // Socket + FCM: notify nearby online drivers
+  let noDriversAvailable = false;
   try {
     if (isManagerReady()) {
       const passenger = await prisma.user.findUnique({
@@ -183,23 +185,32 @@ let ride;
         },
       );
 
-      sendFcmToNearbyDrivers(
-        notifiedDriverIds,
-        'New Ride Request',
-        `Pickup: ${ride.pickupAddress}`,
-      ).catch((err) => logger.warn('createRide: FCM to drivers failed:', err));
+      if (notifiedDriverIds.length === 0) {
+        noDriversAvailable = true;
+        emitToPassenger(ride.passengerId, SocketEvents.NO_DRIVERS_AVAILABLE, {
+          rideId:  ride.id,
+          message: 'No drivers are currently available in your area. Your ride request has been cancelled. Please try again in a few minutes.',
+        });
+      } else {
+        sendFcmToNearbyDrivers(
+          notifiedDriverIds,
+          'New Ride Request',
+          `Pickup: ${ride.pickupAddress}`,
+        ).catch((err) => logger.warn('createRide: FCM to drivers failed:', err));
 
-      saveNotificationToDriversByProfileId(notifiedDriverIds, {
-        senderId:    ride.passengerId,
-        senderName:  passenger?.name ?? '',
-        senderImage: passenger?.profileImage ?? '',
-        text:        `New ride request from ${passenger?.name ?? 'a passenger'}. Pickup: ${ride.pickupAddress}`,
-        type:        'newRideRequest',
-      });
+        saveNotificationToDriversByProfileId(notifiedDriverIds, {
+          senderId:    ride.passengerId,
+          senderName:  passenger?.name ?? '',
+          senderImage: passenger?.profileImage ?? '',
+          text:        `New ride request from ${passenger?.name ?? 'a passenger'}. Pickup: ${ride.pickupAddress}`,
+          type:        'newRideRequest',
+        });
+      }
     }
   } catch (err) {
     logger.warn('createRide: socket emission failed (non-critical):', err);
   }
+
 
   return ride;
 };
@@ -215,7 +226,7 @@ const driverAcceptRide = async (
 
   console.log("driver accept ride =>>>> ", {rideId, driverId, lat, lng})
   // Only accept rides that haven't been taken yet
-  const existing = await prisma.ride.findFirst({ where: { id: rideId, driverId: null } });
+  const existing = await prisma.ride.findFirst({ where: { id: rideId, driverId: null, isDeleted: false } });
   if (!existing) throw new Error('Ride not found or already accepted');
 
   const ride = await prisma.ride.update({
@@ -313,6 +324,8 @@ const driverAcceptRide = async (
       emitToPassenger(ride.passengerId, SocketEvents.RIDE_ACCEPTED, payload);
       emitToRideRoom(rideId, SocketEvents.RIDE_ACCEPTED, payload);
 
+      notifyRideTaken(rideId, driverId);
+
       sendNotificationByFcmToken(
         ride.passengerId,
         `${driverDoc?.user?.name ?? 'Your driver'} accepted your ride. They are on the way!`,
@@ -338,7 +351,7 @@ const driverAcceptRide = async (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const updateRideStatus = async (rideId: string, status: RideStatus) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false} });
   if (!ride) throw new Error('Ride not found');
 
   const saved = await prisma.ride.update({
@@ -398,6 +411,30 @@ const updateRideStatus = async (rideId: string, status: RideStatus) => {
         emitToPassenger(saved.passengerId, SocketEvents.RIDE_COMPLETED, statusPayload);
         if (saved.driverId) setDriverOnRide(saved.driverId, false);
 
+        // Send ride completed email (non-critical)
+        prisma.user.findUnique({ where: { id: saved.passengerId }, select: { email: true, name: true } })
+          .then((passenger) => {
+            if (passenger?.email) {
+              return rideCompletedEmailTemplate({
+                sentTo:              passenger.email,
+                subject:             'Your Ride is Completed',
+                passengerName:       passenger.name ?? 'Passenger',
+                rideId:              saved.rideId ?? saved.id,
+                date:                saved.createdAt.toLocaleDateString(),
+                pickupAddress:       saved.pickupAddress ?? '',
+                dropoffAddress:      saved.dropoffAddress ?? '',
+                totalFare:           saved.totalFare ?? 0,
+                subtotal:            saved.estimatedFare ?? undefined,
+                discount:            saved.promoDiscount ?? undefined,
+                platformCommission:  saved.adminCommission ?? undefined,
+                paymentMethod:       saved.paymentMethod,
+                distanceKm:          saved.distanceKm ?? undefined,
+                durationMin:         saved.durationMin ?? undefined,
+              });
+            }
+          })
+          .catch((err) => logger.warn('updateRideStatus: ride completed email failed:', err));
+
         if (saved.paymentMethod === 'CASH' && saved.driverId) {
           PaymentService.createPayment({
             rideId:        saved.id,
@@ -426,9 +463,57 @@ const getMyRides = async (
 ) => {
   const { skip, take, page, limit } = buildPagination(query);
   const isDriver = role === 'driver';
+
+  const status = (query.status as string | undefined)?.toUpperCase();
+
+  let statusFilter: Prisma.RideWhereInput = {};
+
+  // =========================================================
+  // USER STATUS FILTER
+  // =========================================================
+
+  // COMPLETED RIDES
+  if (status === 'COMPLETED') {
+    statusFilter = {
+      status: RideStatus.COMPLETED,
+    };
+  }
+
+  // CANCELLED RIDES
+  else if (status === 'CANCELLED') {
+    statusFilter = {
+      status: RideStatus.CANCELLED,
+    };
+  }
+
+  // UPCOMING RIDES
+  else if (status === 'UPCOMING') {
+    statusFilter = {
+      pickupType: PickupType.SCHEDULED,
+
+      // ONLY TODAY OR FUTURE SCHEDULED RIDES
+      scheduledAt: {
+        gte: new Date(),
+      },
+
+      // EXCLUDE COMPLETED/CANCELLED
+      status: {
+        notIn: [
+          RideStatus.CONFIRM_DROPOFF,
+          RideStatus.CANCELLED,
+        ],
+      },
+    };
+  }
+
   const where: Prisma.RideWhereInput = {
-    ...(isDriver ? { driverId: id } : { passengerId: id }),
+    ...(isDriver
+      ? { driverId: id }
+      : { passengerId: id }),
+
     isDeleted: false,
+
+    ...statusFilter,
   };
 
   const [result, total] = await Promise.all([
@@ -501,7 +586,7 @@ const estimateRideOptions = async ({ distanceKm, country }: EstimateRideOptionsS
 // ─────────────────────────────────────────────────────────────────────────────
 
 const applyPromoToRide = async (rideId: string, promoCode: string) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false} });
   if (!ride) throw new Error('Ride not found');
   if (!ride.totalFare || ride.totalFare <= 0) throw new Error('Ride totalFare is not set yet');
 
@@ -572,7 +657,7 @@ const endRide = async (
   driverId:        string,
   dropoffLocation: ILocation,
 ) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
   if (!ride) throw new AppError(httpStatus.NOT_FOUND, 'Ride not found');
   if (ride.driverId !== driverId) throw new AppError(httpStatus.FORBIDDEN, 'You are not the driver of this ride');
   if (ride.status !== RideStatus.ONGOING) throw new AppError(httpStatus.BAD_REQUEST, `Cannot end ride in status: ${ride.status}`);
@@ -641,7 +726,7 @@ const arrivedDropoff = async (
   driverId:        string,
   dropoffLocation: ILocation,
 ) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
   if (!ride) throw new AppError(httpStatus.NOT_FOUND, 'Ride not found');
   if (ride.driverId !== driverId) throw new AppError(httpStatus.FORBIDDEN, 'You are not the driver of this ride');
   if (ride.status !== RideStatus.ONGOING) throw new AppError(httpStatus.BAD_REQUEST, `Cannot arrive at dropoff in status: ${ride.status}`);
@@ -709,7 +794,18 @@ const arrivedDropoff = async (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const confirmDropoff = async (rideId: string, driverId: string) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique(
+    { where: { id: rideId, isDeleted: false },
+     include: {
+      passenger: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+    }, 
+  });
 
   if (!ride) throw new AppError(httpStatus.NOT_FOUND, 'Ride not found');
 
@@ -754,6 +850,9 @@ const confirmDropoff = async (rideId: string, driverId: string) => {
   } catch (err) {
     logger.warn('confirmDropoff: socket emission failed (non-critical):', err);
   }
+  
+
+
 
   return saved;
 };
@@ -761,7 +860,7 @@ const confirmDropoff = async (rideId: string, driverId: string) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const payRide = async (rideId: string, passengerId: string, tip = 0) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
   if (!ride)                             throw new AppError(httpStatus.NOT_FOUND,  'Ride not found');
   if (ride.passengerId !== passengerId)  throw new AppError(httpStatus.FORBIDDEN,  'You are not the passenger of this ride');
   if (ride.status !== RideStatus.CONFIRM_DROPOFF) throw new AppError(httpStatus.BAD_REQUEST, `Payment not allowed in status: ${ride.status}`);
@@ -788,6 +887,30 @@ const payRide = async (rideId: string, passengerId: string, tip = 0) => {
       statusHistory:   { create: [{ status: RideStatus.COMPLETED }] },
     },
   });
+
+  // Send ride completed email (non-critical)
+  prisma.user.findUnique({ where: { id: saved.passengerId }, select: { email: true, name: true } })
+    .then((passenger) => {
+      if (passenger?.email) {
+        return rideCompletedEmailTemplate({
+          sentTo:              passenger.email,
+          subject:             'Your Ride is Completed',
+          passengerName:       passenger.name ?? 'Passenger',
+          rideId:              saved.rideId ?? saved.id,
+          date:                saved.createdAt.toLocaleDateString(),
+          pickupAddress:       saved.pickupAddress ?? '',
+          dropoffAddress:      saved.dropoffAddress ?? '',
+          totalFare:           saved.totalFare ?? 0,
+          subtotal:            saved.estimatedFare ?? undefined,
+          discount:            saved.promoDiscount ?? undefined,
+          platformCommission:  saved.adminCommission ?? undefined,
+          paymentMethod:       saved.paymentMethod,
+          distanceKm:          saved.distanceKm ?? undefined,
+          durationMin:         saved.durationMin ?? undefined,
+        });
+      }
+    })
+    .catch((err) => logger.warn('payRide: ride completed email failed:', err));
 
   // CASH: deduct admin commission from driver wallet
   if (saved.driverId) {
@@ -856,7 +979,7 @@ const payRide = async (rideId: string, passengerId: string, tip = 0) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const collectCashPayment = async (rideId: string, driverId: string, tip = 0) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false} });
   if (!ride)                             throw new AppError(httpStatus.NOT_FOUND,  'Ride not found');
   if (ride.driverId !== driverId)        throw new AppError(httpStatus.FORBIDDEN,  'You are not the driver of this ride');
   if (ride.paymentMethod !== 'CASH')     throw new AppError(httpStatus.BAD_REQUEST, 'This endpoint is only for CASH rides');
@@ -884,6 +1007,30 @@ const collectCashPayment = async (rideId: string, driverId: string, tip = 0) => 
       statusHistory:   { create: [{ status: RideStatus.COMPLETED }] },
     },
   });
+
+  // Send ride completed email (non-critical)
+  prisma.user.findUnique({ where: { id: saved.passengerId }, select: { email: true, name: true } })
+    .then((passenger) => {
+      if (passenger?.email) {
+        return rideCompletedEmailTemplate({
+          sentTo:              passenger.email,
+          subject:             'Your Ride is Completed',
+          passengerName:       passenger.name ?? 'Passenger',
+          rideId:              saved.rideId ?? saved.id,
+          date:                saved.createdAt.toLocaleDateString(),
+          pickupAddress:       saved.pickupAddress ?? '',
+          dropoffAddress:      saved.dropoffAddress ?? '',
+          totalFare:           saved.totalFare ?? 0,
+          subtotal:            saved.estimatedFare ?? undefined,
+          discount:            saved.promoDiscount ?? undefined,
+          platformCommission:  saved.adminCommission ?? undefined,
+          paymentMethod:       saved.paymentMethod,
+          distanceKm:          saved.distanceKm ?? undefined,
+          durationMin:         saved.durationMin ?? undefined,
+        });
+      }
+    })
+    .catch((err) => logger.warn('collectCashPayment: ride completed email failed:', err));
 
   try {
     await prisma.driverProfile.update({
@@ -968,7 +1115,7 @@ const cancelRide = async (
   reason:      string,
   details?:    string,
 ) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
   if (!ride) throw new Error('Ride not found');
 
   const saved = await prisma.ride.update({
@@ -1129,6 +1276,8 @@ const getRecentRides = async (
   const where: Prisma.RideWhereInput = {
     ...(role === 'driver' ? { driverId: userId } : { passengerId: userId }),
     isDeleted: false,
+    status: RideStatus.COMPLETED,
+
     ...(searchTerm && {
       OR: [
         { status:      { equals: searchTerm.toUpperCase() as RideStatus } },
@@ -1172,7 +1321,7 @@ const submitRideReview = async (
   reviewerRole: 'passenger' | 'driver',
   payload:      Pick<IReviewEntry, 'rating' | 'comment'>,
 ) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
   if (!ride) throw new AppError(httpStatus.NOT_FOUND, 'Ride not found');
 
   const reviewableStatuses: RideStatus[] = [RideStatus.COMPLETED, RideStatus.CANCELLED, RideStatus.CONFIRM_DROPOFF];
@@ -1255,6 +1404,8 @@ const submitRideReview = async (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const getMyActiveRide = async (id: string, role: 'passenger' | 'driver') => {
+
+  console.log("get my active rides id and role =>>> ", id, role)
   const where: Prisma.RideWhereInput = {
     ...(role === 'driver' ? { driverId: id } : { passengerId: id }),
     status: {
@@ -1266,6 +1417,7 @@ const getMyActiveRide = async (id: string, role: 'passenger' | 'driver') => {
     },
     isDeleted: false,
   };
+
 
   return prisma.ride.findFirst({
     where,

@@ -107,7 +107,7 @@ const otpVerifyAndCreateUser = async ({ otp, token }: OTPVerifyAndCreateUserProp
 
   const { name, email, password, role, countryCode, phoneNumber, country, gender, dateOfBirth, acceptTerms, driverType, homeAddress } = decodeData as TUserCreate;
 
-  const isOtpMatch = await otpServices.otpMatch(email, 'email-verification', otp);
+  const isOtpMatch = await otpServices.otpMatch(email, 'email_verification', otp);
   if (!isOtpMatch) throw new AppError(httpStatus.BAD_REQUEST, 'OTP did not match');
 
   await otpServices.updateOtpByEmail(email, 'email-verification', { status: 'verified' });
@@ -208,14 +208,16 @@ const normalizeUserPayload = (payload: TUserUpdate) => {
     rest.workAddressLat = wa.location?.coordinates?.[1] ?? wa.lat ?? undefined;
   }
 
-  // Convert dateOfBirth string to Date
-  if (rest.dateOfBirth && typeof rest.dateOfBirth === 'string') {
-    rest.dateOfBirth = new Date(rest.dateOfBirth);
+  // Convert dateOfBirth string to Date; drop it entirely if empty
+  if (typeof rest.dateOfBirth === 'string') {
+    if (rest.dateOfBirth) rest.dateOfBirth = new Date(rest.dateOfBirth);
+    else delete rest.dateOfBirth;
   }
 
-  // Convert licenseExpiryDate string to Date
-  if (rest.licenseExpiryDate && typeof rest.licenseExpiryDate === 'string') {
-    rest.licenseExpiryDate = new Date(rest.licenseExpiryDate);
+  // Convert licenseExpiryDate string to Date; drop it entirely if empty
+  if (typeof rest.licenseExpiryDate === 'string') {
+    if (rest.licenseExpiryDate) rest.licenseExpiryDate = new Date(rest.licenseExpiryDate);
+    else delete rest.licenseExpiryDate;
   }
 
   // Split into user fields and driver profile fields
@@ -234,6 +236,7 @@ const normalizeUserPayload = (payload: TUserUpdate) => {
 };
 
 const updateMyProfile = async (userId: string, payload: TUserUpdate) => {
+
   const user = await prisma.user.findUnique({ where: { id: userId, isDeleted: false } });
   if (!user) throw new AppError(httpStatus.NOT_FOUND, 'User not found');
 

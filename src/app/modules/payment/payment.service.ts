@@ -15,6 +15,7 @@ import {
 } from '../../../socket/socket.manager';
 import { SocketEvents } from '../../../socket/socket.types';
 import { recordWalletTransaction } from '../wallet/wallet.service';
+import { rideCompletedEmailTemplate } from '../../utils/emailNotification';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ const createCheckoutSession = async (
   passengerId: string,
   tip = 0,
 ) => {
-  const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false} });
   if (!ride) throw new AppError(httpStatus.NOT_FOUND, 'Ride not found');
 
   if (ride.passengerId !== passengerId) {
@@ -176,7 +177,7 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string): Promise<
     const { rideId, passengerId, driverId } = session.metadata ?? {};
     if (!rideId) return;
 
-    const ride = await prisma.ride.findUnique({ where: { id: rideId } });
+    const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
     if (!ride || ride.paymentStatus === 'PAID') return;
 
     await prisma.ride.update({
@@ -187,6 +188,30 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string): Promise<
         statusHistory: { create: [{ status: 'COMPLETED' }] },
       },
     });
+
+    // Send ride completed email (non-critical)
+    prisma.user.findUnique({ where: { id: ride.passengerId }, select: { email: true, name: true } })
+      .then((passenger) => {
+        if (passenger?.email) {
+          return rideCompletedEmailTemplate({
+            sentTo:              passenger.email,
+            subject:             'Your Ride is Completed',
+            passengerName:       passenger.name ?? 'Passenger',
+            rideId:              ride.rideId ?? rideId,
+            date:                ride.createdAt.toLocaleDateString(),
+            pickupAddress:       ride.pickupAddress ?? '',
+            dropoffAddress:      ride.dropoffAddress ?? '',
+            totalFare:           ride.totalFare ?? 0,
+            subtotal:            ride.estimatedFare ?? undefined,
+            discount:            ride.promoDiscount ?? undefined,
+            platformCommission:  ride.adminCommission ?? undefined,
+            paymentMethod:       'CARD',
+            distanceKm:          ride.distanceKm ?? undefined,
+            durationMin:         ride.durationMin ?? undefined,
+          });
+        }
+      })
+      .catch((err) => logger.warn('handleStripeWebhook: ride completed email failed:', err));
 
     try {
       const existingPayment = await prisma.payment.findFirst({ where: { rideId } });

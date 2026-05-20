@@ -63,10 +63,10 @@ const transporter = nodemailer.createTransport({
   try {
      console.log('mail send started');
     await transporter.sendMail({
-      from: `"${config.smtp.fromName}" <${config.smtp.user}>`, // sender address
-      to, // list of receivers
+      from: `"${config.smtp.fromName || config.project_name}" <${config.noreply_email}>`,
+      to,
       subject,
-      html, // html body
+      html,
     });
 
     console.log('mail sended successfully');

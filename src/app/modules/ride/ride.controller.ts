@@ -7,11 +7,20 @@ import { estimateMotoOptions, estimateRideOptions } from './ride.utils';
 
 const createRide = catchAsync(async (req: Request, res: Response) => {
   const {userId, country} = req.user;
-  
+
   req.body.passenger = userId;
 
-  console.log("ride body =>>> ", req.body)
   const result = await RideService.createRide(req.body);
+
+  if (!result) {
+    sendResponse(res, {
+      statusCode: 200,
+      success: false,
+      message: 'No drivers are currently available in your area. Please try again in a few minutes.',
+      data: null,
+    });
+    return;
+  }
 
   sendResponse(res, {
     statusCode: 201,

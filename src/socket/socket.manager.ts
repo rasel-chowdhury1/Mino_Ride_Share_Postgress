@@ -16,6 +16,9 @@ let _io: SocketIOServer | null = null;
 const onlineUsers   = new Map<string, IOnlineUserEntry>();
 const onlineDrivers = new Map<string, IOnlineDriverEntry>();
 
+// rideId → driver profile IDs that received the ride request
+const rideNotifiedDrivers = new Map<string, string[]>();
+
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
 export function initManager(io: SocketIOServer): void {
@@ -192,7 +195,12 @@ export async function broadcastRideRequestToNearbyDrivers(
 ): Promise<string[]> {
   if (!_io) return [];
 
+
+
   const onlineIds = getOnlineDriverProfileIds();
+
+  console.log("online ids =>>>>> ", onlineIds);
+
   if (onlineIds.length === 0) return [];
 
   const nearbyDrivers = await prisma.driverProfile.findMany({
@@ -206,11 +214,15 @@ export async function broadcastRideRequestToNearbyDrivers(
     select: { id: true, vehicleType: true },
   });
 
+  console.log("nearby drivers =>>>>> ", nearbyDrivers)
+
   const [pickupLng, pickupLat] = pickupCoordinates;
+
   const notified: string[] = [];
 
   for (const driver of nearbyDrivers) {
     const entry = onlineDrivers.get(driver.id);
+    
 
     let distanceToPickupKm = 2;
     if (entry?.location) {
@@ -223,6 +235,7 @@ export async function broadcastRideRequestToNearbyDrivers(
     const speed               = VEHICLE_SPEED_KMH[driver.vehicleType as string] ?? 40;
     const estimatedArrivalMin = Math.ceil((distanceToPickupKm / speed) * 60);
 
+
     const payload: RideRequestedPayload = { ...basePayload, distanceToPickupKm, estimatedArrivalMin };
 
     if (emitToDriver(driver.id, SocketEvents.RIDE_REQUESTED, payload)) {
@@ -231,7 +244,31 @@ export async function broadcastRideRequestToNearbyDrivers(
   }
 
   logger.info(`broadcastRideRequestToNearbyDrivers: notified ${notified.length}/${nearbyDrivers.length} drivers`);
+
+  if (notified.length > 0) {
+    rideNotifiedDrivers.set(basePayload.rideId, notified);
+  }
+
   return notified;
+}
+
+export function notifyRideTaken(rideId: string, acceptingDriverId: string): void {
+  const notified = rideNotifiedDrivers.get(rideId);
+  if (!notified) return;
+
+  const rideTakenPayload = {
+    rideId,
+    message: 'This ride has been accepted by another driver.',
+  };
+
+  for (const driverId of notified) {
+    if (driverId !== acceptingDriverId) {
+      emitToDriver(driverId, SocketEvents.RIDE_TAKEN, rideTakenPayload);
+    }
+  }
+
+  rideNotifiedDrivers.delete(rideId);
+  logger.info(`notifyRideTaken: ride ${rideId} — notified ${notified.length - 1} other drivers`);
 }
 
 export function broadcastOnlineUsers(): void {

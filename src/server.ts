@@ -49,6 +49,7 @@ async function main() {
                 gte: new Date(notifyTime.getTime() - 60 * 1_000),
                 lte: new Date(notifyTime.getTime() + 60 * 1_000),
               },
+              isDeleted: false
             },
           });
 

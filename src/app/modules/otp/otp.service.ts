@@ -73,7 +73,8 @@ const checkOtpByNumber = async (phone: string) => {
 };
 
 const otpMatch = async (email: string, purpose: string, otp: string) => {
-  return prisma.otp.findFirst({
+
+  return await  prisma.otp.findFirst({
     where: {
       sentTo:    email,
       purpose:   mapPurpose(purpose),

@@ -161,7 +161,7 @@ export function registerSocketEvents(socket: Socket, _io: SocketIOServer): void 
         if (!data) return;
 
         const ride = await prisma.ride.findUnique({
-          where: { id: data.rideId },
+          where: { id: data.rideId,isDeleted: false },
           include: { passenger: { select: { id: true, name: true } } },
         });
 
@@ -466,7 +466,7 @@ export function registerSocketEvents(socket: Socket, _io: SocketIOServer): void 
           emitToRideRoom(data.rideId, SocketEvents.DRIVER_LOCATION_UPDATED, locationPayload);
 
           const rideRow = await prisma.ride.findUnique({
-            where:  { id: data.rideId },
+            where:  { id: data.rideId, isDeleted: false },
             select: { passengerId: true },
           });
           if (rideRow?.passengerId) {
@@ -572,7 +572,7 @@ export function registerSocketEvents(socket: Socket, _io: SocketIOServer): void 
         if (!data) return;
 
         const ride = await prisma.ride.findUnique({
-          where:   { id: data.rideId },
+          where:   { id: data.rideId, isDeleted: false },
           include: { passenger: { select: { name: true, profileImage: true } } },
         });
         if (!ride) return sendAck(ackFn, { success: false, error: 'Ride not found', code: 404 });
@@ -682,6 +682,7 @@ export function registerSocketEvents(socket: Socket, _io: SocketIOServer): void 
       //   data:  { isOnline: false },
       // }).catch((err) => logger.error('Auto-offline on disconnect failed:', err));
       logger.info(`[AUTO OFFLINE] driver=${userId}`);
+      
     }
 
     cleanupRateLimitEntry(socket.id);
