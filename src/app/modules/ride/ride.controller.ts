@@ -12,12 +12,28 @@ const createRide = catchAsync(async (req: Request, res: Response) => {
 
   const result = await RideService.createRide(req.body);
 
+  // No drivers found — ride was deleted
   if (!result) {
     sendResponse(res, {
       statusCode: 200,
       success: false,
       message: 'No drivers are currently available in your area. Please try again in a few minutes.',
       data: null,
+    });
+    return;
+  }
+
+  // CARD: 3DS authentication required before ride can be created
+  if ('requiresAction' in result && result.requiresAction) {
+    sendResponse(res, {
+      statusCode: 200,
+      success: false,
+      message: result.message as string,
+      data: {
+        requiresAction:  true,
+        clientSecret:    result.clientSecret,
+        paymentIntentId: result.paymentIntentId,
+      },
     });
     return;
   }

@@ -210,6 +210,28 @@ enum CancellationActor {
   SYSTEM
 }
 
+enum CardBrand {
+  visa
+  mastercard
+  amex
+  discover
+  diners
+  jcb
+  unionpay
+  unknown
+}
+
+enum WalletProvider {
+  apple_pay
+  google_pay
+  paypal
+}
+
+enum PaymentCardType {
+  CARD
+  WALLET
+}
+
 // ============================================================
 // USER
 // ============================================================
@@ -257,6 +279,8 @@ model User {
   bannedAt                 DateTime?
   bannedById               String?
 
+  stripeCustomerId         String?
+
   isDeleted                Boolean             @default(false)
   acceptTerms              Boolean             @default(true)
   fcmToken                 String              @default("")
@@ -299,6 +323,7 @@ model User {
   reportsReceived          Report[]            @relation("ReportedTargetUser")
 
   paymentsAsPassenger      Payment[]           @relation("PaymentPassenger")
+  paymentCards             PaymentCard[]
 
   @@index([email])
   @@index([role])
@@ -463,6 +488,8 @@ model Ride {
 
   cancelledBy String?
   reason      String?
+
+  stripePaymentIntentId String?
 
   isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -847,4 +874,40 @@ model Setting {
   updatedAt DateTime @updatedAt
 
   @@map("settings")
+}
+
+// ============================================================
+// PAYMENT CARD
+// ============================================================
+
+model PaymentCard {
+  id                    String          @id @default(uuid())
+  userId                String
+  stripeCustomerId      String
+  stripePaymentMethodId String          @unique
+
+  type           PaymentCardType  @default(CARD)
+  brand          CardBrand        @default(unknown)
+  walletProvider WalletProvider?
+
+  last4          String
+  expMonth       Int?
+  expYear        Int?
+  cardHolderName String?
+  funding        String?
+  country        String?
+  fingerprint    String?
+
+  isDefault  Boolean   @default(false)
+  isDeleted  Boolean   @default(false)
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isDeleted])
+  @@index([userId, isDefault])
+  @@map("payment_cards")
 }

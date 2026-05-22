@@ -57,10 +57,12 @@ export interface TUserCreate {
   fcmToken?: string;
   loginWith?: LoginWith;
   appleId?: string;
+  
 }
 
 // ── Update-profile payload ───────────────────────────────────────────────────
 export type TUserUpdate = Partial<TUserCreate> & {
+  stripeCustomerId?: string;
   profileImage?: string;
   deviceIp?: string;
   deviceBrowser?: string;

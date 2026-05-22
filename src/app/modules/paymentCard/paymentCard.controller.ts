@@ -1,79 +1,110 @@
-import { Request, Response } from "express";
-import httpStatus from "http-status";
-import catchAsync from "../../utils/catchAsync";
-import sendResponse from "../../utils/sendResponse";
-import { PaymentCardService, addTestCardService } from "./paymentCard.service";
+import { Request, Response } from 'express';
+import httpStatus from 'http-status';
+import catchAsync from '../../utils/catchAsync';
+import sendResponse from '../../utils/sendResponse';
+import { PaymentCardService } from './paymentCard.service';
 
-const addCard = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user.userId;
-  const { paymentMethodId, isDefault } = req.body;
-  const result = await PaymentCardService.addCard(userId, { paymentMethodId, isDefault });
+// ─────────────────────────────────────────────────────────────────────────────
+
+const createSetupIntent = catchAsync(async (req: Request, res: Response) => {
+  const { userId } = req.user;
+  const result = await PaymentCardService.createSetupIntent(userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success:    true,
+    message:    'Setup intent created. Use clientSecret with Stripe.js to collect card details.',
+    data:       result,
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const savePaymentCard = catchAsync(async (req: Request, res: Response) => {
+  const { userId }          = req.user;
+  const { paymentMethodId } = req.body as { paymentMethodId: string };
+
+  const result = await PaymentCardService.savePaymentCard(userId, paymentMethodId);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
-    success: true,
-    message: "Card added successfully",
-    data: result,
+    success:    true,
+    message:    'Card saved successfully',
+    data:       result,
   });
 });
 
-const getMyCards = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user.userId;
-  const result = await PaymentCardService.getMyCards(userId);
+// ─────────────────────────────────────────────────────────────────────────────
+
+const listMyCards = catchAsync(async (req: Request, res: Response) => {
+  const { userId } = req.user;
+  const result = await PaymentCardService.listUserCards(userId);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
-    success: true,
-    message: "Cards retrieved successfully",
-    data: result,
+    success:    true,
+    message:    'Cards retrieved successfully',
+    data:       result,
   });
 });
 
-const setDefaultCard = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user.userId;
-  const { id } = req.params;
-  const result = await PaymentCardService.setDefaultCard(userId, id);
+// ─────────────────────────────────────────────────────────────────────────────
+
+const setDefault = catchAsync(async (req: Request, res: Response) => {
+  const { userId }  = req.user;
+  const { cardId }  = req.params;
+
+  const result = await PaymentCardService.setDefaultCard(userId, cardId);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
-    success: true,
-    message: "Default card updated successfully",
-    data: result,
+    success:    true,
+    message:    'Default card updated successfully',
+    data:       result,
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const deleteCard = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user.userId;
-  const { id } = req.params;
+  const { userId } = req.user;
+  const { cardId } = req.params;
 
-
-  await PaymentCardService.deleteCard(userId, id);
+  await PaymentCardService.deleteCard(userId, cardId);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
-    success: true,
-    message: "Card removed successfully",
-    data: null,
+    success:    true,
+    message:    'Card removed successfully',
+    data:       null,
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const addTestCard = catchAsync(async (req: Request, res: Response) => {
-  const userId = req.user.userId;
-  const { isDefault } = req.body;
-  const result = await addTestCardService(userId, { isDefault });
+  const { userId }   = req.user;
+  const { cardType } = req.body as { cardType?: string };
+
+  const result = await PaymentCardService.addTestCard(userId, cardType ?? 'visa');
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
-    success: true,
-    message: "Test card added successfully",
-    data: result,
+    success:    true,
+    message:    'Test card added successfully',
+    data:       result,
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const PaymentCardController = {
-  addCard,
-  getMyCards,
-  setDefaultCard,
+  createSetupIntent,
+  savePaymentCard,
+  listMyCards,
+  setDefault,
   deleteCard,
   addTestCard,
 };

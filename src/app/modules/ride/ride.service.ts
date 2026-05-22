@@ -19,6 +19,9 @@ import { AVERAGE_SPEED_KMH, ILocation, NearestRidesProps, IReviewEntry, TRideCre
 import AppError from '../../error/AppError';
 import httpStatus from 'http-status';
 import { PaymentService } from '../payment/payment.service';
+import { PaymentCardService } from '../paymentCard/paymentCard.service';
+import { stripe } from '../../config/stripe';
+import config from '../../config';
 import { recordWalletTransaction } from '../wallet/wallet.service';
 import { rideCompletedEmailTemplate } from '../../utils/emailNotification';
 
@@ -76,6 +79,7 @@ const createRide = async (payload: any) => {
   if (!passengerId) {
     throw new Error('passengerId is required');
   }
+  
   if (!pickupAddress || pickupLat === undefined || pickupLng === undefined) {
     throw new Error('Pickup location is required');
   }
@@ -86,6 +90,45 @@ const createRide = async (payload: any) => {
 
   const rideId = await generateRideId();
   const country = payload.country || "BANGLADESH";
+
+  // ── CARD: authorize (hold) estimated fare before creating the ride ──────────
+  let stripePaymentIntentId: string | null = null;
+
+  if (payload.paymentMethod === 'CARD') {
+    const defaultCard = await PaymentCardService.getDefaultCard(passengerId);
+    const authAmount  = Math.round((payload.totalFare || 0) * 1.5 * 100); // 50% buffer, in cents
+
+    try {
+      const intent = await stripe.paymentIntents.create(
+        {
+          amount:         authAmount,
+          currency:       (config.stripe.stripe_currency as string) || 'eur',
+          customer:       defaultCard.stripeCustomerId,
+          payment_method: defaultCard.stripePaymentMethodId,
+          capture_method: 'manual',
+          confirm:        true,
+          off_session:    true,
+          metadata:       { rideId, passengerId },
+        },
+        { idempotencyKey: `ride-auth-${rideId}` },
+      );
+      stripePaymentIntentId = intent.id;
+    } catch (err: any) {
+      if (err?.code === 'authentication_required') {
+        // 3DS required — return clientSecret to client without creating the ride
+        return {
+          requiresAction:  true,
+          clientSecret:    (err.payment_intent?.client_secret as string) ?? null,
+          paymentIntentId: (err.payment_intent?.id as string) ?? null,
+          message:         '3D Secure authentication required. Use clientSecret to confirm.',
+        };
+      }
+      throw new AppError(
+        httpStatus.PAYMENT_REQUIRED,
+        err?.message ?? 'Card authorization failed. Please check your card.',
+      );
+    }
+  }
 
 let ride;
  try {
@@ -111,7 +154,8 @@ let ride;
       estimatedFare:   payload.estimatedFare || 0,
       totalFare:       payload.totalFare    || 0,
       driverEarning:   payload.driverEarning || 0,
-      adminCommission: payload.adminCommission || 0,
+      adminCommission:      payload.adminCommission || 0,
+      stripePaymentIntentId: stripePaymentIntentId,
 
       pickupType:  payload.pickupType,
       scheduledAt: payload.scheduledAt ?? null,
@@ -141,6 +185,11 @@ let ride;
   });
  } catch (error) {
    console.log("error from create ride =>>>>>>>> ", error)
+   // Release the card hold if ride row failed to insert
+   if (stripePaymentIntentId) {
+     stripe.paymentIntents.cancel(stripePaymentIntentId)
+       .catch((e) => logger.warn('createRide: PaymentIntent cancel on DB fail:', e));
+   }
    return;
  }
 
@@ -187,10 +236,6 @@ let ride;
 
       if (notifiedDriverIds.length === 0) {
         noDriversAvailable = true;
-        emitToPassenger(ride.passengerId, SocketEvents.NO_DRIVERS_AVAILABLE, {
-          rideId:  ride.id,
-          message: 'No drivers are currently available in your area. Your ride request has been cancelled. Please try again in a few minutes.',
-        });
       } else {
         sendFcmToNearbyDrivers(
           notifiedDriverIds,
@@ -211,6 +256,20 @@ let ride;
     logger.warn('createRide: socket emission failed (non-critical):', err);
   }
 
+  if (noDriversAvailable) {
+    // Release card hold before deleting the ride
+    if (stripePaymentIntentId) {
+      stripe.paymentIntents.cancel(stripePaymentIntentId)
+        .catch((e) => logger.warn('createRide: PaymentIntent cancel (no drivers):', e));
+    }
+    await prisma.rideStatusHistory.deleteMany({ where: { rideId: ride.id } });
+    await prisma.ride.delete({ where: { id: ride.id } });
+    emitToPassenger(ride.passengerId, SocketEvents.NO_DRIVERS_AVAILABLE, {
+      rideId:  ride.id,
+      message: 'No drivers are currently available in your area. Your ride request has been cancelled. Please try again in a few minutes.',
+    });
+    return null;
+  }
 
   return ride;
 };

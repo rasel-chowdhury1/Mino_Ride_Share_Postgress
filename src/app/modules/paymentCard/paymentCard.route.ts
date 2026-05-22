@@ -1,39 +1,54 @@
-import express from "express";
-import { PaymentCardController } from "./paymentCard.controller";
-import auth from "../../middleware/auth";
-import { USER_ROLE } from "../user/user.constants";
+import { Router } from 'express';
+import auth from '../../middleware/auth';
+import validateRequest from '../../middleware/validateRequest';
+import { USER_ROLE } from '../user/user.constants';
+import { PaymentCardController } from './paymentCard.controller';
+import { savePaymentCardSchema } from './paymentCard.validation';
 
-const router = express.Router();
+const router = Router();
 
 router
+  /** Create a Stripe SetupIntent — client uses clientSecret to collect card */
   .post(
-    "/test-card",
-    auth(USER_ROLE.DRIVER, USER_ROLE.PASSENGER),
-    PaymentCardController.addTestCard
+    '/setup-intent',
+    auth(USER_ROLE.PASSENGER),
+    PaymentCardController.createSetupIntent,
   )
 
+  /** Save card after Stripe.js confirms the SetupIntent */
   .post(
-    "/add",
-    auth(USER_ROLE.DRIVER, USER_ROLE.PASSENGER),
-    PaymentCardController.addCard
+    '/save',
+    auth(USER_ROLE.PASSENGER),
+    validateRequest(savePaymentCardSchema),
+    PaymentCardController.savePaymentCard,
   )
 
+  /** List all saved cards for the authenticated passenger */
   .get(
-    "/my",
-    auth(USER_ROLE.DRIVER, USER_ROLE.PASSENGER),
-    PaymentCardController.getMyCards
+    '/my-cards',
+    auth(USER_ROLE.PASSENGER),
+    PaymentCardController.listMyCards,
   )
 
+  /** Set a card as the default payment method */
   .patch(
-    "/:id/set-default",
-    auth(USER_ROLE.DRIVER, USER_ROLE.PASSENGER),
-    PaymentCardController.setDefaultCard
+    '/:cardId/default',
+    auth(USER_ROLE.PASSENGER),
+    PaymentCardController.setDefault,
   )
 
+  /** Remove a card (soft-delete + Stripe detach) */
   .delete(
-    "/:id",
-    auth(USER_ROLE.DRIVER, USER_ROLE.PASSENGER),
-    PaymentCardController.deleteCard
+    '/:cardId',
+    auth(USER_ROLE.PASSENGER),
+    PaymentCardController.deleteCard,
+  )
+
+  /** DEV/TEST only — add a Stripe test card without needing Stripe.js */
+  .post(
+    '/test/add-card',
+    auth(USER_ROLE.PASSENGER),
+    PaymentCardController.addTestCard,
   );
 
 export const PaymentCardRoutes = router;

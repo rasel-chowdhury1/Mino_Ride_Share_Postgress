@@ -14,6 +14,7 @@ import { PaymentRoutes } from "../modules/payment/payment.route";
 import { MessageRoutes } from "../modules/message/message.route";
 import { DashboardRoutes } from "../modules/dashboard/dashboard.route";
 import { WalletRoutes } from "../modules/wallet/wallet.route";
+import { PaymentCardRoutes } from "../modules/paymentCard/paymentCard.route";
 
 const router = Router();
 
@@ -77,6 +78,10 @@ const moduleRoutes = [
   {
     path: "/wallet",
     route: WalletRoutes,
+  },
+  {
+    path: "/payment-cards",
+    route: PaymentCardRoutes,
   },
 ];
 
