@@ -7,6 +7,12 @@ export const WalletRoutes = Router();
 
 /** User & Driver */
 WalletRoutes
+  .post(
+    '/topup',
+    auth(USER_ROLE.PASSENGER, USER_ROLE.DRIVER),
+    WalletController.createTopUpCheckoutSession,
+  )
+
   .get(
     '/',
     auth(USER_ROLE.PASSENGER, USER_ROLE.DRIVER),

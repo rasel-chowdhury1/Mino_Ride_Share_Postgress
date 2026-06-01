@@ -4,6 +4,7 @@ import {
   isManagerReady,
   broadcastRideRequestToNearbyDrivers,
   getOnlineDriverEntry,
+  getOnlineDriverProfileIds,
   emitToPassenger,
   emitToDriver,
   emitToRideRoom,
@@ -63,39 +64,108 @@ const driverInclude = {
 
 const createRide = async (payload: any) => {
 
-
   const passengerId = payload.passenger;
   const pickupAddress = payload.pickupLocation?.address;
   const pickupCoords = payload.pickupLocation?.location?.coordinates || [];
   const pickupLng = pickupCoords[0];
   const pickupLat = pickupCoords[1];
-  
+
   const dropoffAddress = payload.dropoffLocation?.address;
   const dropoffCoords = payload.dropoffLocation?.location?.coordinates || [];
   const dropoffLng = dropoffCoords[0];
   const dropoffLat = dropoffCoords[1];
-  
+
   // Required field validation
   if (!passengerId) {
-    throw new Error('passengerId is required');
+    throw new AppError(httpStatus.BAD_REQUEST, 'passengerId is required');
   }
-  
   if (!pickupAddress || pickupLat === undefined || pickupLng === undefined) {
-    throw new Error('Pickup location is required');
+    throw new AppError(httpStatus.BAD_REQUEST, 'Pickup location is required');
   }
   if (!dropoffAddress || dropoffLat === undefined || dropoffLng === undefined) {
-    throw new Error('Dropoff location is required');
+    throw new AppError(httpStatus.BAD_REQUEST, 'Dropoff location is required');
   }
 
+  // ── NEARBY DRIVER CHECK: fail fast before any payment logic or DB write ──────
+  const onlineIds = getOnlineDriverProfileIds();
+
+  console.log("get online ids in create ride =>>> ", onlineIds);
+  
+  if (onlineIds.length === 0) {
+    throw new AppError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      'No drivers are currently available in your area. Please try again in a few minutes.',
+    );
+  }
+
+  const availableDrivers = await prisma.driverProfile.findMany({
+    where: {
+      id:             { in: onlineIds },
+      isOnline:       true,
+      isOnRide:       false,
+      approvalStatus: 'verified',
+      driverType:     payload.vehicleCategory === 'MINO_MOTO' ? 'motorcycle' : 'car',
+    },
+    select: { id: true },
+  });
+
+  console.log("=== available drivers =>>> ", availableDrivers)
+
+  if (availableDrivers.length === 0) {
+    throw new AppError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      'No drivers are currently available for your vehicle type. Please try again in a few minutes.',
+    );
+  }
+
+  const MAX_DISTANCE_KM = 5;
+  const hasNearbyDriver = availableDrivers.some((driver) => {
+    const entry = getOnlineDriverEntry(driver.id);
+    console.log("entry =>>> ", entry)
+    if (!entry?.location) return true; // no GPS yet → assume reachable
+    const [driverLng, driverLat] = entry.location;
+    return getDistanceKm(pickupLat, pickupLng, driverLat, driverLng) <= MAX_DISTANCE_KM;
+  });
+
+  if (!hasNearbyDriver) {
+    throw new AppError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      'No drivers are currently available near your pickup location. Please try again in a few minutes.',
+    );
+  }
+  // ── End nearby driver check ──────────────────────────────────────────────────
 
   const rideId = await generateRideId();
   const country = payload.country || "BANGLADESH";
+
+  // ── WALLET: validate passenger has sufficient balance ────────────────────────
+  if (payload.paymentMethod === 'WALLET') {
+    
+    const passenger = await prisma.user.findUnique({
+      where:  { id: passengerId },
+      select: { wallet: true },
+    });
+
+    const required  = payload.estimatedFare || 0;
+    const available = passenger?.wallet ?? 0;
+
+    if (available < required) {
+      throw new AppError(
+        httpStatus.PAYMENT_REQUIRED,
+        `Insufficient wallet balance. Required: ${required.toFixed(2)}, Available: ${available.toFixed(2)}`,
+      );
+    }
+
+  }
 
   // ── CARD: authorize (hold) estimated fare before creating the ride ──────────
   let stripePaymentIntentId: string | null = null;
 
   if (payload.paymentMethod === 'CARD') {
     const defaultCard = await PaymentCardService.getDefaultCard(passengerId);
+
+    console.log("defult card =>>>>> ", defaultCard);
+
     const authAmount  = Math.round((payload.totalFare || 0) * 1.5 * 100); // 50% buffer, in cents
 
     try {
@@ -113,6 +183,9 @@ const createRide = async (payload: any) => {
         { idempotencyKey: `ride-auth-${rideId}` },
       );
       stripePaymentIntentId = intent.id;
+
+      console.log("ride intent =>>>>> ", intent);
+
     } catch (err: any) {
       if (err?.code === 'authentication_required') {
         // 3DS required — return clientSecret to client without creating the ride
@@ -304,13 +377,14 @@ const driverAcceptRide = async (
     },
   });
 
-  // Update driver's current location if provided
-  if (lat !== undefined && lng !== undefined) {
-    await prisma.driverProfile.update({
-      where: { id: driverId },
-      data:  { currentLat: lat, currentLng: lng },
-    });
-  }
+  // Mark driver as on ride + optionally update location
+  await prisma.driverProfile.update({
+    where: { id: driverId },
+    data:  {
+      isOnRide:   true,
+      ...(lat !== undefined && lng !== undefined && { currentLat: lat, currentLng: lng }),
+    },
+  });
 
   try {
     if (isManagerReady()) {
@@ -852,6 +926,140 @@ const arrivedDropoff = async (
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// processWalletRidePayment — auto-deduct passenger wallet when driver confirms
+// dropoff. Mirror of captureRidePayment (CARD) for WALLET rides.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const processWalletRidePayment = async (ride: any): Promise<void> => {
+  const rideId      = ride.id as string;
+  const totalFare   = (ride.totalFare ?? 0) as number;
+  const passengerId = ride.passengerId as string;
+  const driverId    = ride.driverId   as string | null;
+
+  const fareConfig      = await prisma.fare.findFirst({ where: { country: ride.country, isActive: true } });
+  const commissionPct   = fareConfig?.platformCommissionPercentage ?? 0;
+  const adminCommission = Math.round((totalFare * commissionPct) / 100);
+  const driverEarning   = Math.round(totalFare - adminCommission);
+
+  // Atomic: deduct wallet + complete ride + credit driver
+  await prisma.$transaction(async (tx) => {
+    const passenger = await tx.user.findUnique({ where: { id: passengerId }, select: { wallet: true } });
+    if (!passenger || passenger.wallet < totalFare) {
+      throw new AppError(httpStatus.PAYMENT_REQUIRED, 'Insufficient wallet balance for ride payment');
+    }
+
+    await tx.user.update({ where: { id: passengerId }, data: { wallet: { decrement: totalFare } } });
+
+    await tx.ride.update({
+      where: { id: rideId },
+      data:  {
+        paymentStatus:   'PAID',
+        status:          RideStatus.COMPLETED,
+        adminCommission,
+        driverEarning,
+        statusHistory:   { create: [{ status: RideStatus.COMPLETED }] },
+      },
+    });
+
+    if (driverId) {
+      await tx.driverProfile.update({
+        where: { id: driverId },
+        data:  {
+          walletBalance: { increment: driverEarning },
+          totalEarnings: { increment: driverEarning },
+          totalTrips:    { increment: 1 },
+        },
+      });
+    }
+  });
+
+  // Passenger wallet transaction record
+  recordWalletTransaction({
+    userId:      passengerId,
+    type:        'DEBIT',
+    source:      'RIDE_PAYMENT',
+    amount:      totalFare,
+    description: `Wallet payment for ride #${ride.rideId ?? rideId}`,
+    rideId,
+  }).catch((err) => logger.warn('WALLET: passenger tx record failed:', err));
+
+  // Driver commission wallet record
+  if (driverId && adminCommission > 0) {
+    prisma.driverProfile.findUnique({ where: { id: driverId }, select: { userId: true } })
+      .then((dp) => {
+        if (dp) {
+          recordWalletTransaction({
+            userId:      dp.userId,
+            type:        'DEBIT',
+            source:      'ADMIN_COMMISSION',
+            amount:      adminCommission,
+            description: `Platform commission for ride #${ride.rideId ?? rideId}`,
+            rideId,
+          }).catch((err) => logger.warn('WALLET: driver commission tx failed:', err));
+        }
+      })
+      .catch((err) => logger.warn('WALLET: driver lookup failed:', err));
+  }
+
+  // Payment record
+  PaymentService.createPayment({
+    rideId,
+    passengerId,
+    driverId:       driverId!,
+    amount:         totalFare,
+    totalFare,
+    driverEarning,
+    adminCommission,
+    paymentMethod: 'WALLET',
+  }).catch((err) => logger.warn('WALLET: payment record failed:', err));
+
+  // Ride completed email
+  if (ride.passenger?.email) {
+    rideCompletedEmailTemplate({
+      sentTo:             ride.passenger.email,
+      subject:            'Your Ride is Completed',
+      passengerName:      ride.passenger.name ?? 'Passenger',
+      rideId:             ride.rideId ?? rideId,
+      date:               new Date(ride.createdAt).toLocaleDateString(),
+      pickupAddress:      ride.pickupAddress  ?? '',
+      dropoffAddress:     ride.dropoffAddress ?? '',
+      totalFare,
+      subtotal:           ride.estimatedFare  ?? undefined,
+      discount:           ride.promoDiscount  ?? undefined,
+      platformCommission: adminCommission,
+      paymentMethod:      'WALLET',
+      distanceKm:         ride.distanceKm  ?? undefined,
+      durationMin:        ride.durationMin ?? undefined,
+    }).catch((err) => logger.warn('WALLET: completed email failed:', err));
+  }
+
+  // Socket — RIDE_COMPLETED
+  try {
+    if (isManagerReady()) {
+      const completedPayload = {
+        rideId,
+        status:          'COMPLETED',
+        totalFare,
+        driverEarning,
+        adminCommission,
+        paymentStatus:   'PAID',
+        paymentMethod:   'WALLET',
+        changedAt:       new Date(),
+        serviceType:     ride.serviceType,
+        pickupType:      ride.pickupType,
+      };
+      emitToRideRoom(rideId, SocketEvents.RIDE_COMPLETED, completedPayload);
+      emitToPassenger(passengerId, SocketEvents.RIDE_STATUS_UPDATED, { rideId, status: 'COMPLETED', changedAt: new Date() });
+      if (driverId) setDriverOnRide(driverId, false);
+    }
+  } catch (err) {
+    logger.warn('WALLET: socket emission failed:', err);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const confirmDropoff = async (rideId: string, driverId: string) => {
   const ride = await prisma.ride.findUnique(
     { where: { id: rideId, isDeleted: false },
@@ -882,6 +1090,12 @@ const confirmDropoff = async (rideId: string, driverId: string) => {
     },
   });
 
+  // Release driver from ride in DB
+  await prisma.driverProfile.update({
+    where: { id: driverId },
+    data:  { isOnRide: false },
+  });
+
   try {
     if (isManagerReady()) {
       const payload = {
@@ -909,9 +1123,18 @@ const confirmDropoff = async (rideId: string, driverId: string) => {
   } catch (err) {
     logger.warn('confirmDropoff: socket emission failed (non-critical):', err);
   }
-  
 
+  // CARD: auto-capture the held PaymentIntent → ride becomes COMPLETED + PAID
+  if (ride.paymentMethod === 'CARD' && ride.stripePaymentIntentId) {
+    PaymentService.captureRidePayment(rideId)
+      .catch((err: unknown) => logger.warn('confirmDropoff: CARD auto-capture failed:', err));
+  }
 
+  // WALLET: auto-deduct passenger wallet → ride becomes COMPLETED + PAID
+  if (ride.paymentMethod === 'WALLET') {
+    processWalletRidePayment(ride)
+      .catch((err: unknown) => logger.warn('confirmDropoff: WALLET auto-payment failed:', err));
+  }
 
   return saved;
 };
@@ -1187,6 +1410,14 @@ const cancelRide = async (
       cancellations:  { create: [{ cancelledBy, reason, details }] },
     },
   });
+
+  // Release driver from ride in DB (if one was assigned)
+  if (saved.driverId) {
+    prisma.driverProfile.update({
+      where: { id: saved.driverId },
+      data:  { isOnRide: false },
+    }).catch((err) => logger.warn('cancelRide: driverProfile isOnRide reset failed:', err));
+  }
 
   try {
     if (isManagerReady()) {

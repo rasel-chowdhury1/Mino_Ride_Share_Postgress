@@ -70,6 +70,6 @@ env/
 .vercel
 .vercel
 public/
-
+googleFirebaseAdmin.json
 
 

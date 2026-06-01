@@ -11,6 +11,7 @@ import {
   isManagerReady,
   emitToRideRoom,
   emitToDriver,
+  emitToPassenger,
   setDriverOnRide,
 } from '../../../socket/socket.manager';
 import { SocketEvents } from '../../../socket/socket.types';
@@ -173,7 +174,55 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string): Promise<
   }
 
   if (event.type === 'checkout.session.completed') {
-    const session                       = event.data.object as Stripe.Checkout.Session;
+    const session = event.data.object as Stripe.Checkout.Session;
+
+    // ── Wallet top-up ──────────────────────────────────────────────────────
+    if (session.metadata?.type === 'WALLET_TOP_UP') {
+      const { userId, role, amount } = session.metadata;
+      if (!userId || !amount) return;
+
+      const topUpAmount = Number(amount);
+      if (topUpAmount <= 0) return;
+
+      try {
+        if (role === 'driver') {
+          await prisma.$transaction(async (tx) => {
+            const driver = await tx.driverProfile.findFirst({ where: { userId }, select: { id: true, walletBalance: true } });
+            if (!driver) throw new AppError(httpStatus.NOT_FOUND, 'Driver profile not found');
+
+            await tx.driverProfile.update({
+              where: { id: driver.id },
+              data:  { walletBalance: { increment: topUpAmount } },
+            });
+
+            await tx.walletTransaction.create({
+              data: {
+                userId,
+                type:          'CREDIT',
+                source:        'TOP_UP',
+                amount:        topUpAmount,
+                balanceBefore: driver.walletBalance,
+                balanceAfter:  driver.walletBalance + topUpAmount,
+                description:   'Wallet top-up via card',
+              },
+            });
+          });
+        } else {
+          await recordWalletTransaction({
+            userId,
+            type:        'CREDIT',
+            source:      'TOP_UP',
+            amount:      topUpAmount,
+            description: 'Wallet top-up via card',
+          });
+        }
+      } catch (err) {
+        logger.warn('handleStripeWebhook: wallet top-up failed:', err);
+      }
+      return;
+    }
+    // ── End wallet top-up ──────────────────────────────────────────────────
+
     const { rideId, passengerId, driverId } = session.metadata ?? {};
     if (!rideId) return;
 
@@ -429,6 +478,137 @@ const adminGetAllPayments = async (query: Record<string, unknown>) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// captureRidePayment — called from confirmDropoff for CARD rides.
+// Captures the previously authorized PaymentIntent for the exact totalFare,
+// then marks the ride COMPLETED + PAID and credits the driver wallet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const captureRidePayment = async (rideId: string): Promise<void> => {
+  const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
+  if (!ride)                       throw new AppError(httpStatus.NOT_FOUND,   'Ride not found');
+  if (!ride.stripePaymentIntentId) throw new AppError(httpStatus.BAD_REQUEST, 'No Stripe PaymentIntent on this ride');
+  if (ride.paymentStatus === 'PAID') return; // idempotent — already captured
+
+  const totalFare       = ride.totalFare ?? 0;
+  const captureAmount   = Math.round(totalFare * 100); // cents
+
+  const fareConfig      = await prisma.fare.findFirst({ where: { country: ride.country, isActive: true } });
+  const commissionPct   = fareConfig?.platformCommissionPercentage ?? 0;
+  const adminCommission = Math.round((totalFare * commissionPct) / 100);
+  const driverEarning   = Math.round(totalFare - adminCommission);
+
+  // Capture exact fare (always ≤ authorized amount which was totalFare × 1.5)
+  await stripeClient.paymentIntents.capture(ride.stripePaymentIntentId, {
+    amount_to_capture: captureAmount,
+  });
+
+  // Mark ride COMPLETED + PAID
+  const saved = await prisma.ride.update({
+    where: { id: rideId },
+    data:  {
+      paymentStatus:   'PAID',
+      status:          'COMPLETED',
+      adminCommission,
+      driverEarning,
+      statusHistory:   { create: [{ status: 'COMPLETED' }] },
+    },
+  });
+
+  // Credit driver wallet + stats (non-critical)
+  if (ride.driverId) {
+    prisma.driverProfile.update({
+      where: { id: ride.driverId },
+      data:  {
+        walletBalance: { increment: driverEarning },
+        totalEarnings: { increment: driverEarning },
+        totalTrips:    { increment: 1 },
+      },
+    }).catch((err) => logger.warn('captureRidePayment: driver wallet update failed:', err));
+
+    prisma.driverProfile.findUnique({ where: { id: ride.driverId }, select: { userId: true } })
+      .then((dp) => {
+        if (dp && adminCommission > 0) {
+          recordWalletTransaction({
+            userId:      dp.userId,
+            type:        'DEBIT',
+            source:      'ADMIN_COMMISSION',
+            amount:      adminCommission,
+            description: `Platform commission for ride #${ride.rideId ?? rideId}`,
+            rideId,
+          }).catch((e) => logger.warn('captureRidePayment: commission wallet tx failed:', e));
+        }
+      })
+      .catch((e) => logger.warn('captureRidePayment: driver lookup failed:', e));
+  }
+
+  // Payment record (non-critical)
+  prisma.payment.findFirst({ where: { rideId } }).then((existing) => {
+    if (!existing) {
+      createPayment({
+        rideId,
+        passengerId:           ride.passengerId,
+        driverId:              ride.driverId!,
+        amount:                totalFare,
+        totalFare,
+        driverEarning,
+        adminCommission,
+        promoDiscount:         ride.promoDiscount,
+        tip:                   ride.tip,
+        paymentMethod:         'CARD',
+        stripePaymentIntentId: ride.stripePaymentIntentId!,
+      }).catch((err) => logger.warn('captureRidePayment: payment record failed:', err));
+    }
+  }).catch((err) => logger.warn('captureRidePayment: payment lookup failed:', err));
+
+  // Ride completed email (non-critical)
+  prisma.user.findUnique({ where: { id: ride.passengerId }, select: { email: true, name: true } })
+    .then((passenger) => {
+      if (passenger?.email) {
+        return rideCompletedEmailTemplate({
+          sentTo:             passenger.email,
+          subject:            'Your Ride is Completed',
+          passengerName:      passenger.name ?? 'Passenger',
+          rideId:             ride.rideId ?? rideId,
+          date:               ride.createdAt.toLocaleDateString(),
+          pickupAddress:      ride.pickupAddress  ?? '',
+          dropoffAddress:     ride.dropoffAddress ?? '',
+          totalFare,
+          subtotal:           ride.estimatedFare  ?? undefined,
+          discount:           ride.promoDiscount  ?? undefined,
+          platformCommission: adminCommission,
+          paymentMethod:      'CARD',
+          distanceKm:         ride.distanceKm  ?? undefined,
+          durationMin:        ride.durationMin ?? undefined,
+        });
+      }
+    })
+    .catch((err) => logger.warn('captureRidePayment: email failed:', err));
+
+  // Socket — RIDE_COMPLETED
+  try {
+    if (isManagerReady()) {
+      const completedPayload = {
+        rideId,
+        status:          'COMPLETED',
+        totalFare,
+        driverEarning,
+        adminCommission,
+        paymentStatus:   'PAID',
+        paymentMethod:   'CARD',
+        changedAt:       new Date(),
+        serviceType:     saved.serviceType,
+        pickupType:      saved.pickupType,
+      };
+      emitToRideRoom(rideId, SocketEvents.RIDE_COMPLETED, completedPayload);
+      emitToPassenger(saved.passengerId, SocketEvents.RIDE_STATUS_UPDATED, { rideId, status: 'COMPLETED', changedAt: new Date() });
+      if (ride.driverId) setDriverOnRide(ride.driverId, false);
+    }
+  } catch (err) {
+    logger.warn('captureRidePayment: socket emission failed:', err);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const PaymentService = {
   createPayment,
@@ -438,4 +618,5 @@ export const PaymentService = {
   getPassengerPayments,
   getDriverPayments,
   adminGetAllPayments,
+  captureRidePayment,
 };

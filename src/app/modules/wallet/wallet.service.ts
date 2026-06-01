@@ -3,6 +3,8 @@ import httpStatus from 'http-status';
 import prisma from '../../config/prisma';
 import AppError from '../../error/AppError';
 import { TTransactionType, TTransactionSource, TWithdrawalMethod } from './wallet.interface';
+import stripeClient from '../../utils/stripe';
+import config from '../../config';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -291,9 +293,51 @@ const completeWithdrawal = async (withdrawalId: string, adminId: string) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+const createTopUpCheckoutSession = async (userId: string, role: string, amount: number) => {
+  if (!amount || amount <= 0) throw new AppError(httpStatus.BAD_REQUEST, 'Top-up amount must be greater than 0');
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, 'User not found');
+
+  const currency = config.stripe.stripe_currency as string;
+  const zeroDecimalCurrencies = ['bif', 'clp', 'gnf', 'jpy', 'mga', 'pyg', 'rwf', 'ugx', 'vnd', 'xaf', 'xof'];
+  const stripeAmount = zeroDecimalCurrencies.includes(currency.toLowerCase())
+    ? Math.round(amount)
+    : Math.round(amount * 100);
+
+  const session = await stripeClient.checkout.sessions.create({
+    payment_method_types: ['card'],
+    mode: 'payment',
+    line_items: [{
+      price_data: {
+        currency,
+        unit_amount: stripeAmount,
+        product_data: {
+          name: 'Mino Wallet Top-Up',
+          description: `Add ${amount} ${currency.toUpperCase()} to your wallet`,
+        },
+      },
+      quantity: 1,
+    }],
+    metadata: {
+      type:   'WALLET_TOP_UP',
+      userId,
+      role,
+      amount: String(amount),
+    },
+    success_url: `http://104.236.248.157:3000/wallet/topup/success`,
+    cancel_url:  `http://104.236.248.157:3000/wallet/topup/cancel`,
+  });
+
+  return { checkoutUrl: session.url!, sessionId: session.id, amount, currency };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const WalletService = {
   getMyWallet,
   getTransactionHistory,
+  createTopUpCheckoutSession,
   requestWithdrawal,
   getMyWithdrawals,
   adminGetAllWithdrawals,

@@ -21,7 +21,6 @@ const auth = (...userRoles: string[]) => {
       access_secret: config.jwt_access_secret as string,
     });
 
-    console.log("decode data =>>>>>>> ", decodeData)
 
     const { role, userId } = decodeData;
 

@@ -4,6 +4,19 @@ import sendResponse from '../../utils/sendResponse';
 import { WalletService } from './wallet.service';
 import httpStatus from 'http-status';
 
+const createTopUpCheckoutSession = catchAsync(async (req: Request, res: Response) => {
+  const { userId, role } = req.user;
+  const { amount } = req.body;
+  const result = await WalletService.createTopUpCheckoutSession(userId, role, Number(amount));
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: 'Top-up checkout session created',
+    data: result,
+  });
+});
+
 const getMyWallet = catchAsync(async (req: Request, res: Response) => {
   const { userId, role } = req.user;
   const result = await WalletService.getMyWallet(userId, role);
@@ -104,6 +117,7 @@ const completeWithdrawal = catchAsync(async (req: Request, res: Response) => {
 });
 
 export const WalletController = {
+  createTopUpCheckoutSession,
   getMyWallet,
   getTransactionHistory,
   requestWithdrawal,

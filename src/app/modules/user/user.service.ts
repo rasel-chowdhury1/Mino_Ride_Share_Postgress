@@ -100,6 +100,9 @@ const createUserToken = async (payload: TUserCreate) => {
  * Step 2 of registration: verify OTP, create user in PostgreSQL.
  */
 const otpVerifyAndCreateUser = async ({ otp, token }: OTPVerifyAndCreateUserProps) => {
+
+  console.log({otp, token});
+  
   if (!token) throw new AppError(httpStatus.BAD_REQUEST, 'Token not found');
 
   const decodeData = verifyToken({ token, access_secret: config.jwt_access_secret as string });
@@ -107,7 +110,7 @@ const otpVerifyAndCreateUser = async ({ otp, token }: OTPVerifyAndCreateUserProp
 
   const { name, email, password, role, countryCode, phoneNumber, country, gender, dateOfBirth, acceptTerms, driverType, homeAddress } = decodeData as TUserCreate;
 
-  const isOtpMatch = await otpServices.otpMatch(email, 'email_verification', otp);
+  const isOtpMatch = await otpServices.otpMatch(email, 'email-verification', otp);
   if (!isOtpMatch) throw new AppError(httpStatus.BAD_REQUEST, 'OTP did not match');
 
   await otpServices.updateOtpByEmail(email, 'email-verification', { status: 'verified' });
@@ -245,17 +248,8 @@ const updateMyProfile = async (userId: string, payload: TUserUpdate) => {
     if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
   }
 
-  console.log("Payload =>>>>> ", )
-
   const { userFields, driverFields } = normalizeUserPayload(payload);
- console.log("driver profile update data =>>>> ", {
-          userId,
-          driverType:  user.driverType ?? 'car',
-          licenseNumber: '', licenseExpiryDate: new Date(), licenseImage: '',
-          vehicleBrand: '', vehicleModel: '', vehicleColor: '',
-          vehicleType: 'MINO_GO', registrationImage: '',
-          ...driverFields,
-        })
+
   // If driver, update user + upsert driver profile in one transaction
   if (user.role === USER_ROLE.DRIVER) {
     const [, driverProfile] = await prisma.$transaction([

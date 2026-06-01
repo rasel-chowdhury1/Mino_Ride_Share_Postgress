@@ -15,8 +15,11 @@ import type { CreateOtpParams } from './otp.interface';
 function mapPurpose(purpose: string): OtpPurpose {
   const map: Record<string, OtpPurpose> = {
     'email-verification': OtpPurpose.email_verification,
+    'email_verification': OtpPurpose.email_verification,
     'reset-password':     OtpPurpose.reset_password,
+    'reset_password':     OtpPurpose.reset_password,
     'forget-password':    OtpPurpose.forget_password,
+    'forget_password':    OtpPurpose.forget_password,
   };
   return map[purpose] ?? OtpPurpose.email_verification;
 }
@@ -74,7 +77,7 @@ const checkOtpByNumber = async (phone: string) => {
 
 const otpMatch = async (email: string, purpose: string, otp: string) => {
 
-  return await  prisma.otp.findFirst({
+  return prisma.otp.findFirst({
     where: {
       sentTo:    email,
       purpose:   mapPurpose(purpose),
@@ -82,6 +85,7 @@ const otpMatch = async (email: string, purpose: string, otp: string) => {
       status:    OtpStatus.pending,
       expiredAt: { gt: new Date() },
     },
+    orderBy: { createdAt: 'desc' },
   });
 };
 

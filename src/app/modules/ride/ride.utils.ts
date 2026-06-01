@@ -247,6 +247,7 @@ export const recalculateFare = async (params: {
     MINO_XL:      { baseFee: fare.minoXLBaseFee,   bookingFee: fare.minoXLBookingFee,   ratePerKm: fare.minoXLRatePerKm,   minimumFare: fare.minoXLMinimumFare },
     MINO_MOTO:    { baseFee: fare.minoMotoBaseFee, bookingFee: fare.minoMotoBookingFee, ratePerKm: fare.minoMotoRatePerKm, minimumFare: fare.minoMotoMinimumFare },
   };
+  
   const pricing = pricingMap[params.vehicleCategory] ?? pricingMap['MINO_GO'];
 
   let estimatedFare = pricing.baseFee + pricing.bookingFee + pricing.ratePerKm * params.actualDistanceKm;
@@ -267,4 +268,5 @@ export const recalculateFare = async (params: {
     adminCommission: Math.round(adminCommission),
     driverEarning:   Math.round(driverEarning),
   };
+
 };
