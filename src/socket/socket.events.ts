@@ -215,6 +215,7 @@ export function registerSocketEvents(socket: Socket, _io: SocketIOServer): void 
     SocketEvents.CANCEL_RIDE,
     async (payload: CancelRidePayload, ackFn?: AckFn) => {
       try {
+
         if (role !== 'passenger' && role !== 'driver') {
           return sendAck(ackFn, { success: false, error: 'Unauthorized', code: 403 });
         }

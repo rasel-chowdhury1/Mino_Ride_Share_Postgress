@@ -12,6 +12,7 @@ import {
   notifyRideTaken,
 } from '../../../socket/socket.manager';
 import { getDistanceKm, recalculateFare } from './ride.utils';
+import { scheduleRideBroadcast, cancelScheduledRideBroadcast } from './ride.scheduler';
 import { SocketEvents } from '../../../socket/socket.types';
 import { logger } from '../../utils/logger';
 import { sendFcmToNearbyDrivers, sendNotificationByFcmToken } from '../../utils/sentNotificationByFcmToken';
@@ -65,6 +66,12 @@ const driverInclude = {
 const createRide = async (payload: any) => {
 
   const passengerId = payload.passenger;
+  const isScheduledRide = payload.pickupType === PickupType.SCHEDULED;
+
+  // =====================================================
+  // LOCATION PARSE
+  // =====================================================
+
   const pickupAddress = payload.pickupLocation?.address;
   const pickupCoords = payload.pickupLocation?.location?.coordinates || [];
   const pickupLng = pickupCoords[0];
@@ -86,58 +93,72 @@ const createRide = async (payload: any) => {
     throw new AppError(httpStatus.BAD_REQUEST, 'Dropoff location is required');
   }
 
-  // ── NEARBY DRIVER CHECK: fail fast before any payment logic or DB write ──────
-  const onlineIds = getOnlineDriverProfileIds();
 
-  console.log("get online ids in create ride =>>> ", onlineIds);
-  
-  if (onlineIds.length === 0) {
-    throw new AppError(
-      httpStatus.SERVICE_UNAVAILABLE,
-      'No drivers are currently available in your area. Please try again in a few minutes.',
-    );
+  // =====================================================
+  // DRIVER CHECK (ONLY INSTANT RIDE)
+  // =====================================================
+
+  if(!isScheduledRide){
+      // ── NEARBY DRIVER CHECK: fail fast before any payment logic or DB write ──────
+      const onlineIds = getOnlineDriverProfileIds();
+
+      console.log("get online ids in create ride =>>> ", onlineIds);
+      
+      if (onlineIds.length === 0) {
+        throw new AppError(
+          httpStatus.SERVICE_UNAVAILABLE,
+          'No drivers are currently available in your area. Please try again in a few minutes.',
+        );
+      }
+
+      const availableDrivers = await prisma.driverProfile.findMany({
+        where: {
+          id:             { in: onlineIds },
+          isOnline:       true,
+          isOnRide:       false,
+          approvalStatus: 'verified',
+          driverType:     payload.vehicleCategory === 'MINO_MOTO' ? 'motorcycle' : 'car',
+        },
+        select: { id: true },
+      });
+
+      console.log("=== available drivers =>>> ", availableDrivers)
+
+      if (availableDrivers.length === 0) {
+        throw new AppError(
+          httpStatus.SERVICE_UNAVAILABLE,
+          'No drivers are currently available for your vehicle type. Please try again in a few minutes.',
+        );
+      }
+
+      const MAX_DISTANCE_KM = 10;
+      const hasNearbyDriver = availableDrivers.some((driver) => {
+        const entry = getOnlineDriverEntry(driver.id);
+        console.log("entry =>>> ", entry)
+        if (!entry?.location) return true; // no GPS yet → assume reachable
+        const [driverLng, driverLat] = entry.location;
+        return getDistanceKm(pickupLat, pickupLng, driverLat, driverLng) <= MAX_DISTANCE_KM;
+      });
+
+      if (!hasNearbyDriver) {
+        throw new AppError(
+          httpStatus.SERVICE_UNAVAILABLE,
+          'No drivers are currently available near your pickup location. Please try again in a few minutes.',
+        );
+      }
+      // ── End nearby driver check ──────────────────────────────────────────────────
   }
 
-  const availableDrivers = await prisma.driverProfile.findMany({
-    where: {
-      id:             { in: onlineIds },
-      isOnline:       true,
-      isOnRide:       false,
-      approvalStatus: 'verified',
-      driverType:     payload.vehicleCategory === 'MINO_MOTO' ? 'motorcycle' : 'car',
-    },
-    select: { id: true },
-  });
-
-  console.log("=== available drivers =>>> ", availableDrivers)
-
-  if (availableDrivers.length === 0) {
-    throw new AppError(
-      httpStatus.SERVICE_UNAVAILABLE,
-      'No drivers are currently available for your vehicle type. Please try again in a few minutes.',
-    );
-  }
-
-  const MAX_DISTANCE_KM = 5;
-  const hasNearbyDriver = availableDrivers.some((driver) => {
-    const entry = getOnlineDriverEntry(driver.id);
-    console.log("entry =>>> ", entry)
-    if (!entry?.location) return true; // no GPS yet → assume reachable
-    const [driverLng, driverLat] = entry.location;
-    return getDistanceKm(pickupLat, pickupLng, driverLat, driverLng) <= MAX_DISTANCE_KM;
-  });
-
-  if (!hasNearbyDriver) {
-    throw new AppError(
-      httpStatus.SERVICE_UNAVAILABLE,
-      'No drivers are currently available near your pickup location. Please try again in a few minutes.',
-    );
-  }
-  // ── End nearby driver check ──────────────────────────────────────────────────
+// =====================================================
+// GENERATE RIDE ID
+// =====================================================
 
   const rideId = await generateRideId();
-  const country = payload.country || "BANGLADESH";
+  const country = payload.country || "BANGLADESH".toUpperCase();
 
+  // =====================================================
+  // WALLET VALIDATION
+  // =====================================================
   // ── WALLET: validate passenger has sufficient balance ────────────────────────
   if (payload.paymentMethod === 'WALLET') {
     
@@ -146,8 +167,10 @@ const createRide = async (payload: any) => {
       select: { wallet: true },
     });
 
-    const required  = payload.estimatedFare || 0;
+    const required  = payload.totalFare || 0;
     const available = passenger?.wallet ?? 0;
+
+    console.log("required =>> available =>>> ", {required, available})
 
     if (available < required) {
       throw new AppError(
@@ -158,6 +181,9 @@ const createRide = async (payload: any) => {
 
   }
 
+  // =====================================================
+  // CARD AUTHORIZATION
+  // =====================================================
   // ── CARD: authorize (hold) estimated fare before creating the ride ──────────
   let stripePaymentIntentId: string | null = null;
 
@@ -203,6 +229,9 @@ const createRide = async (payload: any) => {
     }
   }
 
+// =====================================================
+// CREATE RIDE
+// =====================================================
 let ride;
  try {
     ride = await prisma.ride.create({
@@ -266,7 +295,13 @@ let ride;
    return;
  }
 
+  // =====================================================
+  // SCHEDULED RIDE
+  // =====================================================
 
+  if (isScheduledRide) {
+    return ride;
+  }
 
   // Socket + FCM: notify nearby online drivers
   let noDriversAvailable = false;
@@ -1397,7 +1432,11 @@ const cancelRide = async (
   reason:      string,
   details?:    string,
 ) => {
+
+  console.log("cancel payload =>>> ", {rideId, cancelledBy, reason, details})
   const ride = await prisma.ride.findUnique({ where: { id: rideId, isDeleted: false } });
+
+  console.log("cancel ride =>>> ", ride)
   if (!ride) throw new Error('Ride not found');
 
   const saved = await prisma.ride.update({
@@ -1411,6 +1450,8 @@ const cancelRide = async (
     },
   });
 
+  const cancelPayload = { rideId: saved.id, status: "CANCELLED", serviceType: ride.serviceType, cancelledBy, reason, details };
+
   // Release driver from ride in DB (if one was assigned)
   if (saved.driverId) {
     prisma.driverProfile.update({
@@ -1418,17 +1459,32 @@ const cancelRide = async (
       data:  { isOnRide: false },
     }).catch((err) => logger.warn('cancelRide: driverProfile isOnRide reset failed:', err));
   }
+  else{
+    emitToRideRoom(rideId, SocketEvents.RIDE_CANCELLED, cancelPayload);
+  }
 
   try {
     if (isManagerReady()) {
-      const cancelPayload = { rideId: saved.id, cancelledBy, reason, details };
+
+
       emitToRideRoom(rideId, SocketEvents.RIDE_CANCELLED, cancelPayload);
       emitToPassenger(saved.passengerId, SocketEvents.RIDE_CANCELLED, cancelPayload);
+
+
+      if(cancelledBy === "DRIVER"){
+        emitToPassenger(saved.passengerId, SocketEvents.RIDE_STATUS_UPDATED, cancelPayload);
+      }
 
       if (saved.driverId) {
         emitToDriver(saved.driverId, SocketEvents.RIDE_CANCELLED, cancelPayload);
         setDriverOnRide(saved.driverId, false);
+        if(cancelledBy === 'PASSENGER'){
+          
+          emitToDriver(saved.driverId, SocketEvents.RIDE_STATUS_UPDATED, cancelPayload);
+        }
       }
+
+     
     }
   } catch (err) {
     logger.warn('cancelRide: socket emission failed (non-critical):', err);

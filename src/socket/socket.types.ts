@@ -84,6 +84,7 @@ export const SocketEvents = {
   ERROR: 'error',
   NO_DRIVERS_AVAILABLE: 'no_drivers_available',
   RIDE_TAKEN: 'ride_taken',
+  RIDE_SCHEDULED: 'ride_scheduled',
 
 } as const;
 
