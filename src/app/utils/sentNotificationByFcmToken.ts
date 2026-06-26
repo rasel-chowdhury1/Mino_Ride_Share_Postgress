@@ -4,11 +4,11 @@ import { getMessaging, Message, MulticastMessage } from 'firebase-admin/messagin
 import prisma from '../config/prisma';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-// const serviceAccount = require('../../../googleFirebaseAdmin.json') as object;
+const serviceAccount = require('../../../googleFirebaseAdmin.json') as object;
 
-// admin.initializeApp({
-//   credential: admin.credential.cert(serviceAccount),
-// });
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 // ── Send FCM notification to a single user by their DB id ────────────────────
 
@@ -17,6 +17,7 @@ export const sendNotificationByFcmToken = async (
   textMessage: string,
   titleName?: string,
 ): Promise<void> => {
+
   const user = await prisma.user.findUnique({
     where:  { id: receiverId },
     select: { fcmToken: true },
@@ -37,6 +38,7 @@ export const sendNotificationByFcmToken = async (
     notification: { title: titleName || 'Mino Ride Share', body: textMessage },
     token: fcmToken,
   };
+
 
   getMessaging()
     .send(message)

@@ -41,6 +41,8 @@ async function main() {
           const now        = new Date();
           const notifyTime = new Date(now.getTime() + 15 * 60 * 1_000);
 
+          console.log({now, notifyTime})
+
           const scheduledRides = await prisma.ride.findMany({
             where: {
               status:      RideStatus.REQUESTED,
