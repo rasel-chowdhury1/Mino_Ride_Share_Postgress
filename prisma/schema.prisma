@@ -568,7 +568,7 @@ model RideParcelDetails {
 
 model Fare {
   id      String @id @default(uuid())
-  country String @unique @db.VarChar(10)
+  country String @unique @db.VarChar(100)
 
   // MINO_GO fares
   minoGoRatePerKm  Float

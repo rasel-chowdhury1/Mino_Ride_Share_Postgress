@@ -1497,14 +1497,16 @@ const cancelRide = async (
 
 const adminGetAllRides = async (query: Record<string, unknown>) => {
   const { skip, take, page, limit } = buildPagination(query);
+
   const searchTerm = query.searchTerm as string | undefined;
+  const status     = query.status as RideStatus | undefined;
 
   const where: Prisma.RideWhereInput = {
     isDeleted: false,
+    status: status ?? { not: RideStatus.CANCELLED },
     ...(searchTerm && {
       OR: [
         { rideId:      { contains: searchTerm, mode: 'insensitive' } },
-        { status:      { equals: searchTerm.toUpperCase() as RideStatus } },
         { serviceType: { equals: searchTerm.toUpperCase() as any } },
       ],
     }),

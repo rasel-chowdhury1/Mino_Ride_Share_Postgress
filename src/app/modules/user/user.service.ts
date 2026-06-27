@@ -443,12 +443,46 @@ const getAllUserQuery = async (userId: string, query: PaginateQuery) => {
 const getAllDrivers = async (query: PaginateQuery) => {
   const { skip, take, page, limit } = buildPagination(query);
   const search = buildUserSearch(query.searchTerm);
+  const status = query.status as UserStatus | undefined;
 
-  const where: Prisma.UserWhereInput = { role: UserRole.driver, adminVerified: AdminVerifiedStatus.verified, isDeleted: false, ...search };
-  const [result, total] = await prisma.$transaction([
-    prisma.user.findMany({ where, skip, take, include: { driverProfile: true }, orderBy: { createdAt: 'desc' } }),
+  const where: Prisma.UserWhereInput = {
+    role: UserRole.passenger,
+    isDeleted: false,
+    adminVerified: AdminVerifiedStatus.verified,
+    ...(status && { status }),
+    ...search,
+  };
+
+
+  const [drivers, total] = await prisma.$transaction([
+    prisma.user.findMany({
+      where,
+      skip,
+      take,
+      include: {
+        driverProfile: true,
+        warningLogs: {
+          orderBy: { warnedAt: 'desc' },
+          include: { warnedBy: { select: { name: true } } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
     prisma.user.count({ where }),
   ]);
+
+  const result = drivers.map(({ warningLogs, warningsCount, ...driver }) => ({
+    ...driver,
+    warnings: {
+      count: warningsCount,
+      logs: warningLogs.map((log) => ({
+        id: log.id,
+        warnedAt: log.warnedAt.toISOString(),
+        warnedBy: log.warnedBy?.name ?? 'System',
+        reason: log.reason,
+      })),
+    },
+  }));
 
   return { meta: { page, limit, total }, result };
 };
@@ -469,17 +503,47 @@ const getPendingDrivers = async (query: PaginateQuery) => {
 const getAllPassengers = async (query: PaginateQuery) => {
   const { skip, take, page, limit } = buildPagination(query);
   const search = buildUserSearch(query.searchTerm);
+  const status = query.status as UserStatus | undefined;
 
-  const where: Prisma.UserWhereInput = { role: UserRole.passenger, isDeleted: false, ...search };
-  const [result, total] = await prisma.$transaction([
-    prisma.user.findMany({ where, skip, take, orderBy: { createdAt: 'desc' } }),
+  const where: Prisma.UserWhereInput = {
+    role: UserRole.passenger,
+    isDeleted: false,
+    ...(status && { status }),
+    ...search,
+  };
+  const [passengers, total] = await prisma.$transaction([
+    prisma.user.findMany({
+      where,
+      skip,
+      take,
+      include: {
+        warningLogs: {
+          orderBy: { warnedAt: 'desc' },
+          include: { warnedBy: { select: { name: true } } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
     prisma.user.count({ where }),
   ]);
+
+  const result = passengers.map(({ warningLogs, warningsCount, ...passenger }) => ({
+    ...passenger,
+    warnings: {
+      count: warningsCount,
+      logs: warningLogs.map((log) => ({
+        id: log.id,
+        warnedAt: log.warnedAt.toISOString(),
+        warnedBy: log.warnedBy?.name ?? 'System',
+        reason: log.reason,
+      })),
+    },
+  }));
 
   return { meta: { page, limit, total }, result };
 };
 
-const getAllSuperAdmins = async () => {
+const getAllSuperAdmins = async (payload?: any) => {
   return prisma.user.findMany({
     where: { role: UserRole.superadmin, isDeleted: false },
     select: { id: true, name: true, email: true, phoneNumber: true, createdAt: true },
