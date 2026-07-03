@@ -42,8 +42,8 @@ function readLogFile(): {
       if (!entry.trim()) return;
       try {
         const log = JSON.parse(entry);
-        if (log.message.responseTime) {
-          const responseTime = parseFloat(log.message.responseTime);
+        if (log.message.responseTimeMs) {
+          const responseTime = parseFloat(log.message.responseTimeMs);
           const label =
             responseTime > 2000 ? 'High' : responseTime > 1000 ? 'Medium' : 'Low';
 

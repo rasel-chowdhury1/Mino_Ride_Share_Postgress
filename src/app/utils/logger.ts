@@ -134,10 +134,26 @@ export const logHttpRequests = (
         : req.ip
       : "Unknown IP";
 
+    
+    const responseTimeMs = Date.now() - startTime;
+      
     logger.info({
       message: `🖥️ IP: ${clientIp} 📅: ${new Date().toLocaleDateString("en-US", { weekday: "long" })} 🌐 Incoming Request: ${colorizeByMethod(req.method)} ${colorizeByStatusCode(res.statusCode)} ${magenta(req.originalUrl)} ⏱️ Response Time: ${yellowBright(`${Date.now() - startTime} ms`)}`,
       size: res.get("Content-Length") || 0,
     });
+
+   
+    responseLineLogger.info({
+      method: req.method,
+      url: req.originalUrl,
+      statusCode: res.statusCode,
+      responseTimeMs,
+      ip: clientIp,
+      contentLength: res.get("Content-Length") || 0,
+      userAgent: req.get("User-Agent") || "",
+    });
+
+
   });
 
   next();

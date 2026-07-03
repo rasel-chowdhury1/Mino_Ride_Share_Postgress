@@ -11,8 +11,6 @@ const buildPagination = (query: Record<string, unknown>) => {
 
 const createFare = async (payload: IFare) => {
   const exists = await prisma.fare.findUnique({ where: { country: payload.country.toUpperCase() } });
-
-  console.log({exists})
   if (exists) throw new AppError(400, 'Fare configuration already exists for this country');
 
   return prisma.fare.create({ data: { ...payload, country: payload.country.toUpperCase() } });
