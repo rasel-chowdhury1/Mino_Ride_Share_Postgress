@@ -42,9 +42,7 @@ app.use(cookieParser());
 
 
 const allowedOrigins = [
-  'https://dashboard.mobilephonerepair.org',
-  'https://mobilephonerepair.org',
-  'https://technician.mobilephonerepair.org',
+  'http://72.60.37.190:4001'
 ];
 
 // Environment check
