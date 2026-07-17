@@ -36,6 +36,7 @@ const userCreateVarification = catchAsync(async (req, res) => {
 
 
 const updateMyProfile = catchAsync(async (req: Request, res: Response) => {
+  console.log("update my profile =>>>> ", req.user)
   const {userId, role } = req.user;
 
 

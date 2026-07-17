@@ -106,6 +106,7 @@ const otpVerifyAndCreateUser = async ({ otp, token }: OTPVerifyAndCreateUserProp
   if (!token) throw new AppError(httpStatus.BAD_REQUEST, 'Token not found');
 
   const decodeData = verifyToken({ token, access_secret: config.jwt_access_secret as string });
+  
   if (!decodeData) throw new AppError(httpStatus.BAD_REQUEST, 'You are not authorised');
 
   const { name, email, password, role, countryCode, phoneNumber, country, gender, dateOfBirth, acceptTerms, driverType, homeAddress } = decodeData as TUserCreate;
@@ -250,6 +251,7 @@ const updateMyProfile = async (userId: string, payload: TUserUpdate) => {
 
   const { userFields, driverFields } = normalizeUserPayload(payload);
 
+
   // If driver, update user + upsert driver profile in one transaction
   if (user.role === USER_ROLE.DRIVER) {
     const [, driverProfile] = await prisma.$transaction([
@@ -278,20 +280,22 @@ const updateMyProfile = async (userId: string, payload: TUserUpdate) => {
       driverProfile.registrationImage
     );
 
-    console.log("driverprofile data >>>>>>>>>>>>>>>>>>>>>>>>>> ", driverProfile)
-    console.log("is completed =>>>> ", isComplete)
+    // console.log("driverprofile data >>>>>>>>>>>>>>>>>>>>>>>>>> ", driverProfile)
+    // console.log("is completed =>>>> ", isComplete)
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data:  { ...userFields as any, isDriverProfileCompleted: isComplete },
     });
 
-    console.log("updated user =>>>>> ", updatedUser)
+    // console.log("updated user =>>>>> ", updatedUser)
 
     return { user: updatedUser, driver: driverProfile, accessToken: buildAccessToken(updatedUser) };
   }
 
   const updatedUser = await prisma.user.update({ where: { id: userId }, data: userFields as any });
+
+
   return { user: updatedUser, accessToken: buildAccessToken(updatedUser) };
 };
 

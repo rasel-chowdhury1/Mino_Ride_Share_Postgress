@@ -53,7 +53,7 @@ const deleteFare = async (id: string) => {
   const existing = await prisma.fare.findUnique({ where: { id } });
   if (!existing) throw new AppError(404, 'Fare configuration not found');
 
-  return prisma.fare.update({ where: { id }, data: { isDeleted: true, isActive: false } });
+  return prisma.fare.delete({ where: { id } });
 };
 
 export const FareService = {

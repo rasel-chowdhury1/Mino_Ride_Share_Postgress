@@ -55,7 +55,7 @@ export default {
   map_url: process.env.MAP_URL,
   primary_color: process.env.PRIMARY_COLOR,
   support_email:  process.env.SUPPORT_EMAIL  || 'support@gomino.co',
-  noreply_email:  process.env.NOREPLY_EMAIL  || 'noreply@gomino.co',
+  noreply_email:  process.env.NOREPLY_EMAIL  || 'no-reply@minoride.com',
   driver_email:   process.env.DRIVER_EMAIL   || 'drivers@gomino.co',
   billing_email:  process.env.BILLING_EMAIL  || 'billing@gomino.co',
   aws,

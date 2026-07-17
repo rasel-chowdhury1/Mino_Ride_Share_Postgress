@@ -231,7 +231,7 @@ enum PaymentCardType {
 model User {
   id                       String              @id @default(uuid())
   name                     String?
-  email                    String              @unique
+  email                    String?              @unique
   password                 String
   countryCode              String?
   phoneNumber              String?
@@ -276,6 +276,7 @@ model User {
   isDeleted                Boolean             @default(false)
   acceptTerms              Boolean             @default(true)
   fcmToken                 String              @default("")
+  googleId                  String?
   appleId                  String?
   loginWith                LoginWith           @default(credentials)
 

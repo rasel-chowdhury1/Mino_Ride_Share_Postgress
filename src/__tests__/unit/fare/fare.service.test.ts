@@ -94,17 +94,16 @@ describe('FareService', () => {
   });
 
   describe('deleteFare', () => {
-    it('soft-deletes a fare config', async () => {
+    it('hard-deletes a fare config', async () => {
       prismaMock.fare.findUnique.mockResolvedValue(fareFixture);
-      prismaMock.fare.update.mockResolvedValue({ ...fareFixture, isDeleted: true, isActive: false });
+      prismaMock.fare.delete.mockResolvedValue(fareFixture);
 
       const result = await FareService.deleteFare('fare-uuid-1');
 
-      expect(prismaMock.fare.update).toHaveBeenCalledWith({
+      expect(prismaMock.fare.delete).toHaveBeenCalledWith({
         where: { id: 'fare-uuid-1' },
-        data: { isDeleted: true, isActive: false },
       });
-      expect(result.isDeleted).toBe(true);
+      expect(result.id).toBe('fare-uuid-1');
     });
 
     it('throws 404 when fare config to delete is not found', async () => {

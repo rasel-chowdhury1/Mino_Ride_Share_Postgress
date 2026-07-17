@@ -82,6 +82,13 @@ const login = async (payload: TLogin, req: Request) => {
     throw new AppError(httpStatus.BAD_REQUEST, 'User not found');
   }
 
+  if (payload.role === USER_ROLE.DRIVER || payload.role === USER_ROLE.PASSENGER) {
+    const requestedRole = payload.role === USER_ROLE.DRIVER ? UserRole.driver : UserRole.passenger;
+    if (requestedRole !== user.role) {
+      throw new AppError(httpStatus.FORBIDDEN, `This account is registered as a ${user.role}. Please log in from the ${user.role} app.`);
+    }
+  }
+
   const passwordMatch = await bcrypt.compare(payload.password, user.password);
   if (!passwordMatch) {
     throw new AppError(httpStatus.BAD_REQUEST, 'Password does not match');
@@ -109,13 +116,25 @@ const googleLogin = async (
   payload: { email: string; name?: string; profileImage?: string; role?: string; fcmToken?: string },
   req: Request,
 ) => {
+
+  console.log("google login payload =>>> ", payload)
+
   let user = await prisma.user.findUnique({ where: { email: payload.email } });
 
   if (user) {
     if (user.loginWith !== LoginWith.google) {
       throw new AppError(httpStatus.FORBIDDEN, `This account is registered with ${user.loginWith}. Please use that login method.`);
     }
-    if (user.isDeleted)                                          throw new AppError(httpStatus.FORBIDDEN, 'This account has been deleted');
+
+    if (payload.role === USER_ROLE.DRIVER || payload.role === USER_ROLE.PASSENGER) {
+      const requestedRole = payload.role === USER_ROLE.DRIVER ? UserRole.driver : UserRole.passenger;
+      if (requestedRole !== user.role) {
+        throw new AppError(httpStatus.FORBIDDEN, `This account is registered as a ${user.role}. Please log in from the ${user.role} app.`);
+      }
+    }
+
+    if (user.isDeleted)     throw new AppError(httpStatus.FORBIDDEN, 'This account has been deleted');
+    
     if (user.status === UserStatus.blocked || user.status === UserStatus.banned) {
       throw new AppError(httpStatus.FORBIDDEN, 'Your account has been suspended. Please contact support.');
     }
@@ -130,6 +149,7 @@ const googleLogin = async (
       },
     });
 
+    console.log({user})
     return generateAndReturnTokens(user);
   }
 
@@ -151,7 +171,11 @@ const googleLogin = async (
     },
   });
 
-  return generateAndReturnTokens(user);
+  const result = generateAndReturnTokens(user);
+
+  console.log("google login result =>>> ", result);
+
+  return result;
 };
 
 // ── Apple Login ───────────────────────────────────────────────────────────────
@@ -160,6 +184,9 @@ const appleLogin = async (
   payload: { appleId: string; email?: string; name?: string; role?: string; fcmToken?: string },
   req: Request,
 ) => {
+
+  // console.log("Payload of Apple login =>>>> ", payload);
+  
   let user = await prisma.user.findFirst({ where: { appleId: payload.appleId } });
 
   if (!user && payload.email) {
@@ -170,6 +197,14 @@ const appleLogin = async (
     if (user.loginWith !== LoginWith.apple) {
       throw new AppError(httpStatus.FORBIDDEN, `This account is registered with ${user.loginWith}. Please use that login method.`);
     }
+
+    if (payload.role === USER_ROLE.DRIVER || payload.role === USER_ROLE.PASSENGER) {
+      const requestedRole = payload.role === USER_ROLE.DRIVER ? UserRole.driver : UserRole.passenger;
+      if (requestedRole !== user.role) {
+        throw new AppError(httpStatus.FORBIDDEN, `This account is registered as a ${user.role}. Please log in from the ${user.role} app.`);
+      }
+    }
+
     if (user.isDeleted)                                          throw new AppError(httpStatus.FORBIDDEN, 'This account has been deleted');
     if (user.status === UserStatus.blocked || user.status === UserStatus.banned) {
       throw new AppError(httpStatus.FORBIDDEN, 'Your account has been suspended. Please contact support.');
@@ -194,6 +229,9 @@ const appleLogin = async (
   }
 
   const role   = payload.role === USER_ROLE.DRIVER ? UserRole.driver : UserRole.passenger;
+
+  console.log("apple login role ===>>> ", role);
+
   const device = buildDeviceInfo(req);
 
   user = await prisma.user.create({
@@ -211,6 +249,8 @@ const appleLogin = async (
       deviceName: device.device, deviceLastLogin: device.lastLogin,
     },
   });
+
+  console.log("user =>>> ", user)
 
   return generateAndReturnTokens(user);
 };

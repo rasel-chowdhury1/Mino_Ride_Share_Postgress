@@ -18,8 +18,8 @@ interface OtpSendEmailParams {
 
 
 
-const logoUrl      = config.logo_url      || 'https://ibb.co.com/bRNJN9tj';
-const mapUrl       = config.map_url       || 'https://ibb.co.com/ycRKxyPD';
+const logoUrl      = config.logo_url      || 'https://i.ibb.co.com/HQj66GS/mino.png';
+const mapUrl       = config.map_url       || 'https://i.ibb.co.com/RpXsvH7C/Mino-Map.png';
 const primaryColor = config.primary_color || '#0A1A2F';
 const supportEmail = config.support_email || 'support@gomino.co';
 const billingEmail = config.billing_email || 'billing@gomino.co';

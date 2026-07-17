@@ -58,10 +58,18 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-  
+
+transporter.verify((err, success) => {
+  if (err) {
+    console.error('SMTP connection failed', err);
+  } else {
+    console.log('SMTP is ready to send mail');
+  }
+});  
+
 
   try {
-     console.log('mail send started');
+     console.log('============== mail send started =======');
     await transporter.sendMail({
       from: `"${config.smtp.fromName || config.project_name}" <${config.noreply_email}>`,
       to,
@@ -69,7 +77,7 @@ const transporter = nodemailer.createTransport({
       html,
     });
 
-    console.log('mail sended successfully');
+    console.log('============== mail sended successfully ========= ');
     
   } catch (error) {
     console.log('send mail error:', error);
