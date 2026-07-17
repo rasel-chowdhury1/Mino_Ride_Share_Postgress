@@ -6,7 +6,7 @@ import prisma from '../../config/prisma';
 
 const getTotalStatistics = async () => {
   const [totalUsers, totalPassengers, totalDrivers, earningAgg, recentUsers] = await Promise.all([
-    prisma.user.count({ where: { isDeleted: false } }),
+    prisma.user.count({ where: { isDeleted: false, role: { not: UserRole.admin } } }),
     prisma.user.count({ where: { role: UserRole.passenger, isDeleted: false } }),
     prisma.user.count({ where: { role: UserRole.driver,    isDeleted: false } }),
     prisma.ride.aggregate({
