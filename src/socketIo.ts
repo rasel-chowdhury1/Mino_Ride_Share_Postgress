@@ -5,6 +5,7 @@
 import { NotificationType } from '@prisma/client';
 import prisma from './app/config/prisma';
 import { sendNotificationEmail } from './app/utils/emailNotification';
+import { sendNotificationByFcmToken } from './app/utils/sentNotificationByFcmToken';
 import { getIO, initSocketServer } from './socket/socket.server';
 import { connectedUsers } from './socket/notification.events';
 
@@ -65,6 +66,11 @@ export const emitNotification = async ({
       isRead:   false,
     },
   });
+
+  if (message?.text) {
+    sendNotificationByFcmToken(receiverId, message.text, message.fullName)
+      .catch((err) => console.error('FCM notification failed:', err));
+  }
 };
 
 // ── sentNotificationForRideRequest ────────────────────────────────────────

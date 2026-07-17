@@ -44,6 +44,7 @@ const login = catchAsync(async (req: Request, res: Response) => {
 // login by google using {email,name,profileImage}
 const googleLogin = catchAsync(async (req: Request, res: Response) => {
 
+
   const result = await authServices.googleLogin(req.body, req);
 
   sendResponse(res, {
@@ -56,6 +57,8 @@ const googleLogin = catchAsync(async (req: Request, res: Response) => {
 });
 
 const appleLogin = catchAsync(async (req: Request, res: Response) => {
+
+
 
   const result = await authServices.appleLogin(req.body, req);
 
@@ -152,6 +155,20 @@ const refreshToken = catchAsync(async (req: Request, res: Response) => {
   });
 });
 
+// logout
+const logout = catchAsync(async (req: Request, res: Response) => {
+  const { userId } = req.user;
+
+  const result = await authServices.logout(userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: 'Logged out successfully',
+    data: result,
+  });
+});
+
 export const authControllers = {
   login,
   googleLogin,
@@ -161,4 +178,5 @@ export const authControllers = {
   forgotPasswordOtpMatch,
   resetPassword,
   refreshToken,
+  logout,
 };

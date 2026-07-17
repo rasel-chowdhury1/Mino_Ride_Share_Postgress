@@ -125,7 +125,7 @@ const sendNotificationEmail = async ({
           : ''
       }
       <h1 style="color: #ffffff; margin: 0; font-size: 20px;">
-        Notification
+        ${subject}
       </h1>
     </div>
 

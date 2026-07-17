@@ -14,7 +14,7 @@ import { generateOptAndExpireTime } from '../otp/otp.utils';
 import { getAdminId } from '../../DB/adminStrore';
 import { emitNotification } from '../../../socketIo';
 import { USER_ROLE } from './user.constants';
-import { otpSendEmail } from '../../utils/emailNotification';
+import { otpSendEmail, sendNotificationEmail } from '../../utils/emailNotification';
 import { buildAccessToken } from './user.utils';
 import type {
   CreateSuperAdminProps,
@@ -341,6 +341,15 @@ const verifyDriverUserById = async (userId: string) => {
       message:    { fullName: 'Admin', image: '', text: 'Congratulations! Your profile has been verified successfully.', photos: [] },
       type:       'driverVerified',
     }).catch(console.error);
+
+    if (user.email) {
+      sendNotificationEmail({
+        sentTo:      user.email,
+        subject:     'Your driver profile has been verified',
+        userName:    user.name || 'Driver',
+        messageText: 'Congratulations! Your profile has been verified successfully. You can now start accepting rides.',
+      }).catch(console.error);
+    }
   });
 
   return user;
@@ -365,6 +374,15 @@ const declineDriverUserById = async (userId: string, reason?: string) => {
       message:    { fullName: 'Admin', image: '', text: reason ? `Your profile has been declined. Reason: ${reason}` : 'Your profile has been declined.', photos: [] },
       type:       'adminApprovalUpdate',
     }).catch(console.error);
+
+    if (user.email) {
+      sendNotificationEmail({
+        sentTo:      user.email,
+        subject:     'Your driver profile has been declined',
+        userName:    user.name || 'Driver',
+        messageText: reason ? `Your profile has been declined. Reason: ${reason}` : 'Your profile has been declined.',
+      }).catch(console.error);
+    }
   });
 
   return user;

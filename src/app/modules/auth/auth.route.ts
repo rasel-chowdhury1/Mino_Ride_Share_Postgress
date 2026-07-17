@@ -43,6 +43,12 @@ authRoutes
     authControllers.changePassword,
   )
 
+  .post(
+    '/logout',
+    auth(USER_ROLE.PASSENGER, USER_ROLE.DRIVER, USER_ROLE.ADMIN, USER_ROLE.SUPERADMIN),
+    authControllers.logout,
+  )
+
   .patch(
     '/forgot-password-otp-match',
     validateRequest(authValidation.otpMatchValidationSchema),

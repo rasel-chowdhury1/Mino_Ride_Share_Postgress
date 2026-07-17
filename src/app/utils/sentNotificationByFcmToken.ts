@@ -69,6 +69,8 @@ export const sendFcmToNearbyDrivers = async (
       select: { fcmToken: true },
     });
 
+    console.log("users= >>>> ", users)
+
     const tokens = users
       .map((u) => u.fcmToken)
       .filter((t): t is string => !!t?.trim());

@@ -74,6 +74,9 @@ const generateAndReturnTokens = async (user: User) => {
 // ── Login ─────────────────────────────────────────────────────────────────────
 
 const login = async (payload: TLogin, req: Request) => {
+
+  console.log("Login payload =>>> ", payload);
+  
   const user = await prisma.user.findUnique({
     where: { email: payload.email },
   });
@@ -185,7 +188,7 @@ const appleLogin = async (
   req: Request,
 ) => {
 
-  // console.log("Payload of Apple login =>>>> ", payload);
+  console.log("Payload of Apple login =>>>> ", payload);
   
   let user = await prisma.user.findFirst({ where: { appleId: payload.appleId } });
 
@@ -364,6 +367,15 @@ const changePassword = async ({
   return prisma.user.update({ where: { id: userId }, data: { password: hashedPassword } });
 };
 
+// ── Logout ────────────────────────────────────────────────────────────────────
+
+const logout = async (userId: string) => {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AppError(httpStatus.NOT_FOUND, 'User not found');
+
+  return prisma.user.update({ where: { id: userId }, data: { fcmToken: '' } });
+};
+
 // ── Refresh token ─────────────────────────────────────────────────────────────
 
 const refreshToken = async (token: string) => {
@@ -400,4 +412,5 @@ export const authServices = {
   forgotPasswordByEmail,
   resetPassword,
   refreshToken,
+  logout,
 };

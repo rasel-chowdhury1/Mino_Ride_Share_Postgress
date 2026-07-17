@@ -26,6 +26,7 @@ import { stripe } from '../../config/stripe';
 import config from '../../config';
 import { recordWalletTransaction } from '../wallet/wallet.service';
 import { rideCompletedEmailTemplate } from '../../utils/emailNotification';
+import { sentNotificationForRideCancelled } from '../../../socketIo';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1463,6 +1464,21 @@ const cancelRide = async (
     emitToRideRoom(rideId, SocketEvents.RIDE_CANCELLED, cancelPayload);
   }
 
+  // Notify the other party (only once a driver was actually engaged, i.e. past REQUESTED)
+  if (ride.status !== RideStatus.REQUESTED && saved.driverId) {
+    prisma.driverProfile.findUnique({ where: { id: saved.driverId }, select: { userId: true } })
+      .then((driverProfile) => {
+        if (!driverProfile) return;
+
+        const notifyPayload = cancelledBy === CancellationActor.DRIVER
+          ? { userId: driverProfile.userId, receiverId: saved.passengerId, reason: reason ?? undefined }
+          : { userId: saved.passengerId, receiverId: driverProfile.userId, reason: reason ?? undefined };
+
+        return sentNotificationForRideCancelled(notifyPayload);
+      })
+      .catch((err) => logger.warn('cancelRide: notification failed:', err));
+  }
+
   try {
     if (isManagerReady()) {
 
@@ -1473,6 +1489,7 @@ const cancelRide = async (
 
       if(cancelledBy === "DRIVER"){
         emitToPassenger(saved.passengerId, SocketEvents.RIDE_STATUS_UPDATED, cancelPayload);
+        
       }
 
       if (saved.driverId) {
